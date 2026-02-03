@@ -1,11 +1,9 @@
-# Используем легкий образ Python 3.11
+# Используем официальный образ Python
 FROM python:3.11-slim
 
-# Отключаем создание .pyc файлов и буферизацию вывода
+# Устанавливаем переменные окружения
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-
-# КРИТИЧЕСКИ ВАЖНО: Устанавливаем переменные окружения для Cargo
 ENV CARGO_HOME=/tmp/cargo
 ENV RUSTUP_HOME=/tmp/rustup
 
@@ -16,22 +14,24 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем Rust с временными путями
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
-    && export PATH="/tmp/cargo/bin:$PATH" \
-    && rustc --version
+# Устанавливаем Rust (КРИТИЧЕСКИ ВАЖНО!)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 
-# Добавляем cargo в PATH
+# Добавляем Rust в PATH
 ENV PATH="/tmp/cargo/bin:${PATH}"
 
-# Копируем файл с зависимостями
+# Проверяем установку
+RUN rustc --version && cargo --version
+
+# Копируем зависимости
 COPY requirements.txt .
 
-# Устанавливаем Python-библиотеки с принудительной установкой wheel
+# Устанавливаем Python зависимости
 RUN pip install --no-cache-dir --upgrade pip wheel setuptools && \
-    # Сначала устанавливаем пакеты без Rust зависимостей
+    # Сначала устанавливаем простые зависимости
     pip install --no-cache-dir \
         aiogram==3.3.0 \
         aiohttp \
@@ -39,13 +39,19 @@ RUN pip install --no-cache-dir --upgrade pip wheel setuptools && \
         python-dotenv==1.0.0 \
         groq==0.4.0 \
         edge-tts==6.1.9 && \
-    # Затем пытаемся установить sentence-transformers с флагами
-    pip install --no-cache-dir --no-build-isolation sentence-transformers==2.3.1
+    # Потом устанавливаем sentence-transformers с флагами
+    pip install --no-cache-dir \
+        --no-build-isolation \
+        sentence-transformers==2.3.1
 
-# Копируем весь код проекта в контейнер
+# Копируем весь проект
 COPY . .
 
-# Создаем папку data
-RUN mkdir -p data
+# Создаем необходимые папки
+RUN mkdir -p data src/database src/services src/keyboards src/handlers
 
+# Запускаем скрипт генерации аудио
+RUN python generate_audio.py
+
+# Команда запуска
 CMD ["python", "main.py"]
