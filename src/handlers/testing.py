@@ -47,10 +47,10 @@ async def process_mbi_answer(callback: types.CallbackQuery, state: FSMContext):
         risk = await db.save_mbi_result(callback.from_user.id, result)
         
         txt = (
-            f"🏁 Тест завершен!\n\n"
-            f"🤯 Истощение: {result['ee']} (Норма < 16)\n"
-            f"😐 Цинизм: {result['dp']} (Норма < 9)\n"
-            f"📉 Редукция: {result['pa']} (Норма > 30)\n\n"
+            f"🏁 <b>Тест завершен!</b>\n\n"
+            f"🤯 Истощение: {result['ee']} (Норма &lt; 16)\n"
+            f"😐 Цинизм: {result['dp']} (Норма &lt; 9)\n"
+            f"📉 Редукция: {result['pa']} (Норма &gt; 30)\n\n"
         )
         
         if risk == "red":
