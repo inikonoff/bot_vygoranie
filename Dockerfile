@@ -8,16 +8,25 @@ ENV PYTHONUNBUFFERED=1
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости (gcc нужен для сборки некоторых lib)
+# Устанавливаем системные зависимости включая Rust
 RUN apt-get update && apt-get install -y \
     build-essential \
+    curl \
+    pkg-config \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && export PATH="/root/.cargo/bin:$PATH" \
     && rm -rf /var/lib/apt/lists/*
+
+# Добавляем cargo в PATH
+ENV PATH="/root/.cargo/bin:$PATH"
 
 # Копируем файл с зависимостями
 COPY requirements.txt .
 
-# Устанавливаем Python-библиотеки
-RUN pip install --no-cache-dir -r requirements.txt
+# Устанавливаем Python-библиотеки с предварительной сборкой некоторых пакетов
+# Используем --no-build-isolation для maturin если будет нужно
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Копируем весь код проекта в контейнер
 COPY . .
