@@ -2,7 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from config import config
-from src.handlers import start, testing, sos
+from src.handlers import start, testing, sos, tracker
 from src.database.supabase_client import db
 
 async def main():
@@ -15,6 +15,7 @@ async def main():
     dp.include_router(start.router) # Нужно создать start.py (простой привет)
     dp.include_router(testing.router)
     dp.include_router(sos.router)
+    dp.include_router(tracker.router)
     
     # Init DB check (optional)
     print("Bot started...")
