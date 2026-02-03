@@ -1,7 +1,7 @@
-aiogram==3.3.0
+aiogram==3.10.0  # Лучше обновить до более свежей
 aiohttp
 supabase==2.3.0
 python-dotenv==1.0.0
 groq==0.4.0
-sentence-transformers==2.3.1 --no-binary tokenizers  # Или наоборот: --only-binary :all:
 edge-tts==6.1.9
+# sentence-transformers удален во избежание вылетов по памяти
