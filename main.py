@@ -1,104 +1,86 @@
 import asyncio
 import logging
 import os
+import sys
+
 from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 
-# Импорты из твоего проекта
-try:
-    from config import config
-    from src.handlers import start, testing, sos, tracker
-    from src.database.supabase_client import db
-except ImportError as e:
-    print(f"Import warning: {e}")
-    # Создаем заглушки для тестирования
-    config = type('Config', (), {'BOT_TOKEN': os.environ.get('BOT_TOKEN', '')})()
-    class RouterStub:
-        router = None
-    start = testing = sos = tracker = RouterStub()
-    db = None
+# Импорт конфигурации
+from config import config
 
+# Импорт хендлеров
+# ВАЖНО: Убедись, что все эти файлы существуют в папке src/handlers
+from src.handlers import start, testing, sos
+# from src.handlers import tracker  # <--- Раскомментируй, если файл tracker.py существует
+
+# Импорт БД (если нужно инициализировать подключение)
+from src.database.supabase_client import db
+
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (Health Check) ---
 async def keep_alive():
-    """Keep-alive сервер для Render/Heroku"""
+    """
+    Запускает маленький веб-сервер, чтобы Render считал сервис активным.
+    """
     app = web.Application()
-    
-    # Простой health-check endpoint
-    async def health_check(request):
-        return web.Response(text="Bot is alive", status=200)
-    
-    app.router.add_get('/', health_check)
+    # Простой роут, который возвращает 200 OK
+    app.router.add_get('/', lambda r: web.Response(text="I am alive"))
     
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Получаем порт из переменных окружения (Render предоставляет PORT)
+    # Render передает порт через переменную окружения PORT
+    # Если переменной нет (локальный запуск), используем 8080
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
-    
-    print(f"Starting keep-alive server on port {port}")
     await site.start()
-    
-    # Бесконечно ждем, чтобы сервер не закрывался
-    await asyncio.Future()
+    logging.info(f"Web server started on port {port}")
 
+# --- ОСНОВНАЯ ФУНКЦИЯ ---
 async def main():
     # Настройка логирования
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     )
-    logger = logging.getLogger(__name__)
-    
-    # Запускаем keep-alive сервер в фоновой задаче
-    keep_alive_task = asyncio.create_task(keep_alive())
-    
-    # Проверяем токен
-    if not config.BOT_TOKEN:
-        logger.error("BOT_TOKEN not found in config or environment variables!")
-        return
-    
-    # Создаем бота и диспетчер
-    bot = Bot(token=config.BOT_TOKEN)
+
+    # 1. Создаем экземпляры Бота и Диспетчера
+    # ParseMode.HTML позволяет использовать форматирование в сообщениях
+    bot = Bot(
+        token=config.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
     dp = Dispatcher()
-    
-    # Регистрируем роутеры (если они есть)
+
+    # 2. Регистрируем роутеры (подключаем логику)
+    dp.include_router(start.router)
+    dp.include_router(testing.router)
+    dp.include_router(sos.router)
+    # dp.include_router(tracker.router) # <--- Раскомментируй, если файл есть
+
+    # 3. Запускаем веб-сервер (фоновая задача)
+    await keep_alive()
+
+    # 4. Удаляем вебхук (полезно при переходе на поллинг, чтобы не ловить старые апдейты)
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    # 5. Запускаем бота
+    logging.info("Bot started and polling...")
     try:
-        if start and start.router:
-            dp.include_router(start.router)
-        if testing and testing.router:
-            dp.include_router(testing.router)
-        if sos and sos.router:
-            dp.include_router(sos.router)
-        if tracker and tracker.router:
-            dp.include_router(tracker.router)
-    except Exception as e:
-        logger.warning(f"Could not include some routers: {e}")
-    
-    # Информация о запуске
-    logger.info("Starting bot...")
-    print("=" * 50)
-    print("Bot is starting...")
-    print(f"Bot token present: {'Yes' if config.BOT_TOKEN else 'No'}")
-    print("=" * 50)
-    
-    try:
-        # Запускаем поллинг
         await dp.start_polling(bot)
     except Exception as e:
-        logger.error(f"Polling error: {e}")
+        logging.error(f"Error during polling: {e}")
     finally:
-        # Отменяем keep-alive задачу при остановке
-        keep_alive_task.cancel()
-        try:
-            await keep_alive_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("Bot stopped")
+        await bot.session.close()
 
 if __name__ == "__main__":
     try:
+        # Запуск асинхронного цикла
+        if sys.platform == 'win32':
+            # Исправление для Windows (если запускаешь локально)
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nBot stopped by user")
-    except Exception as e:
-        print(f"Fatal error: {e}")
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot stopped manually")
