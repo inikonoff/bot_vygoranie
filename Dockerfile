@@ -1,57 +1,32 @@
-# Используем официальный образ Python
+# Используем slim версию 3.11 (она меньше и стабильнее)
 FROM python:3.11-slim
 
-# Устанавливаем переменные окружения
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV CARGO_HOME=/tmp/cargo
-ENV RUSTUP_HOME=/tmp/rustup
+# Переменные для python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости
+# Устанавливаем системные библиотеки (gcc нужен на всякий случай, но Rust скорее всего не понадобится)
 RUN apt-get update && apt-get install -y \
     build-essential \
-    curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем Rust (КРИТИЧЕСКИ ВАЖНО!)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-
-# Добавляем Rust в PATH
-ENV PATH="/tmp/cargo/bin:${PATH}"
-
-# Проверяем установку
-RUN rustc --version && cargo --version
-
-# Копируем зависимости
+# Копируем и ставим зависимости
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем Python зависимости
-RUN pip install --no-cache-dir --upgrade pip wheel setuptools && \
-    # Сначала устанавливаем простые зависимости
-    pip install --no-cache-dir \
-        aiogram==3.3.0 \
-        aiohttp \
-        supabase==2.3.0 \
-        python-dotenv==1.0.0 \
-        groq==0.4.0 \
-        edge-tts==6.1.9 && \
-    # Потом устанавливаем sentence-transformers с флагами
-    pip install --no-cache-dir \
-        --no-build-isolation \
-        sentence-transformers==2.3.1
-
-# Копируем весь проект
+# Копируем код
 COPY . .
 
-# Создаем необходимые папки
+# Создаем папки (если их нет в репозитории)
 RUN mkdir -p data src/database src/services src/keyboards src/handlers
 
-# Запускаем скрипт генерации аудио
-RUN python generate_audio.py
+# ВАЖНО: generate_audio.py лучше запускать ПРИ ЗАПУСКЕ контейнера, а не при сборке.
+# Если он генерирует файлы на основе внешних данных, сборка может упасть.
+# Но если файлы статичны, можно раскомментировать строку ниже:
+# RUN python generate_audio.py
 
-# Команда запуска
+# Запуск
 CMD ["python", "main.py"]
