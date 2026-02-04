@@ -68,7 +68,7 @@ BASE_PROMPT = """
 Ты: "Конечно. Давай вместе: вдох на 4... задержи..."
 """
 
-async def get_ai_response(user_text: str, context: str = "") -> str:
+async def get_groq_response(user_text: str, context: str = "") -> str:
     if not client:
         return "⚠️ Ошибка: ключ API не настроен."
 
@@ -87,7 +87,7 @@ async def get_ai_response(user_text: str, context: str = "") -> str:
             model="openai/gpt-oss-120b",  # Изменено на указанную модель
             messages=messages,
             temperature=0.7,
-            max_tokens=300,  # Увеличено до 300 токенов
+            max_tokens=350,  # Увеличено до 300 токенов
         )
         return completion.choices[0].message.content
 
