@@ -13,8 +13,7 @@ from config import config
 
 # Импорт хендлеров
 # ВАЖНО: Убедись, что все эти файлы существуют в папке src/handlers
-from src.handlers import start, testing, sos
-# from src.handlers import tracker  # <--- Раскомментируй, если файл tracker.py существует
+from src.handlers import start, testing, sos, tracker, emotions, resources  # <--- Добавил недостающие импорты
 
 # Импорт БД (если нужно инициализировать подключение)
 from src.database.supabase_client import db
@@ -58,7 +57,9 @@ async def main():
     dp.include_router(start.router)
     dp.include_router(testing.router)
     dp.include_router(sos.router)
-    # dp.include_router(tracker.router) # <--- Раскомментируй, если файл есть
+    dp.include_router(tracker.router)      # <--- Добавил роутер tracker
+    dp.include_router(emotions.router)     # <--- Добавил роутер emotions
+    dp.include_router(resources.router)    # <--- Добавил роутер resources
 
     # 3. Запускаем веб-сервер (фоновая задача)
     await keep_alive()
