@@ -3,17 +3,27 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def main_menu():
     kb = [
-        [KeyboardButton(text="📊 Диагностика (MBI)"), KeyboardButton(text="📝 Дневник")],
-        [KeyboardButton(text="🆘 SOS / Я киплю"), KeyboardButton(text="🧠 Мои Эмоции")],
-        [KeyboardButton(text="🧘 Ресурсы")]
+        # Добавили кнопку для Бойко
+        [KeyboardButton(text="📊 Диагностика (MBI)"), KeyboardButton(text="📋 Тест Бойко")],
+        [KeyboardButton(text="📝 Дневник"), KeyboardButton(text="🧠 Мои Эмоции")],
+        [KeyboardButton(text="🆘 SOS / Я киплю"), KeyboardButton(text="🧘 Ресурсы")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
+# Клавиатура для MBI (0-6)
 def scale_keyboard():
     builder = InlineKeyboardBuilder()
-    for i in range(7): # 0 to 6
+    for i in range(7):
         builder.button(text=str(i), callback_data=f"mbi_{i}")
     builder.adjust(7)
+    return builder.as_markup()
+
+# НОВАЯ: Клавиатура для Бойко (Да/Нет)
+def yes_no_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Да", callback_data="boyko_yes")
+    builder.button(text="Нет", callback_data="boyko_no")
+    builder.adjust(2)
     return builder.as_markup()
 
 def sos_keyboard():
