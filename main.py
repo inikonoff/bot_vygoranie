@@ -7,6 +7,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import BotCommand  # <--- Добавил импорт BotCommand
 
 # Импорт конфигурации
 from config import config
@@ -17,6 +18,21 @@ from src.handlers import start, testing, sos, tracker, emotions, resources  # <-
 
 # Импорт БД (если нужно инициализировать подключение)
 from src.database.supabase_client import db
+
+# --- ФУНКЦИЯ ДЛЯ НАСТРОЙКИ КОМАНД БОТА ---
+async def setup_bot_commands(bot: Bot):
+    """
+    Устанавливает меню команд бота, которые видны пользователям.
+    """
+    bot_commands = [
+        BotCommand(command="/start", description="🔄 Рестарт (Главное меню)"),
+        BotCommand(command="/sos", description="🆘 Срочная помощь"),
+        BotCommand(command="/diary", description="📝 Заполнить дневник"),
+        BotCommand(command="/mbi", description="📊 Тест на выгорание"),
+        BotCommand(command="/help", description="📖 О боте")
+    ]
+    await bot.set_my_commands(bot_commands)
+    logging.info("Bot commands menu has been set up")
 
 # --- ВЕБ-СЕРВЕР ДЛЯ RENDER (Health Check) ---
 async def keep_alive():
@@ -61,13 +77,16 @@ async def main():
     dp.include_router(emotions.router)     # <--- Добавил роутер emotions
     dp.include_router(resources.router)    # <--- Добавил роутер resources
 
-    # 3. Запускаем веб-сервер (фоновая задача)
+    # 3. Настраиваем меню команд бота
+    await setup_bot_commands(bot)
+
+    # 4. Запускаем веб-сервер (фоновая задача)
     await keep_alive()
 
-    # 4. Удаляем вебхук (полезно при переходе на поллинг, чтобы не ловить старые апдейты)
+    # 5. Удаляем вебхук (полезно при переходе на поллинг, чтобы не ловить старые апдейты)
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # 5. Запускаем бота
+    # 6. Запускаем бота
     logging.info("Bot started and polling...")
     try:
         await dp.start_polling(bot)
