@@ -68,7 +68,7 @@ BASE_PROMPT = """
 Ты: "Конечно. Давай вместе: вдох на 4... задержи..."
 """
 
-async def get_groq_response(user_text: str, context: str = "") -> str:
+async def get_ai_response(user_text: str, context: str = "") -> str:
     if not client:
         return "⚠️ Ошибка: ключ API не настроен."
 
