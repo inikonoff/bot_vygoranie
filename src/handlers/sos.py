@@ -1,9 +1,10 @@
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import URLInputFile
+from aiogram.types import FSInputFile  # <--- Используем FSInputFile вместо URLInputFile
+import asyncio
 from src.keyboards import builders
-from src.services.llm import get_ai_response # Убедись, что llm.py создан
+from src.services.llm import get_ai_response  # Убедись, что llm.py создан
 
 router = Router()
 
@@ -17,17 +18,30 @@ class AngerState(StatesGroup):
 async def sos_menu(message: types.Message):
     await message.answer("Что чувствуешь? Выбери, чтобы я помог:", reply_markup=builders.sos_keyboard())
 
-# --- ДЫХАНИЕ (С ГИФКОЙ) ---
+# --- ДЫХАНИЕ (С ЛОКАЛЬНОЙ ГИФКОЙ) ---
 @router.callback_query(F.data == "sos_breathe")
 async def sos_breathe(callback: types.CallbackQuery):
-    # Ссылка на GIF "Квадратное дыхание"
-    gif_url = "https://media1.tenor.com/m/1x0lI9k8WnIAAAAC/breathing-box-breathing.gif"
+    try:
+        # Используем локальный файл. Это 100% надежно.
+        # Убедись, что файл data/sq_br.jpg существует в репозитории!
+        gif_file = FSInputFile("data/sq_br.jpg")
+        
+        await callback.message.answer_animation(
+            animation=gif_file,
+            caption=(
+                "🌬 <b>Квадратное дыхание</b>\n\n"
+                "Синхронизируйся с анимацией:\n"
+                "1. 🟢 Вдох (4 сек)\n"
+                "2. ✋ Задержка (4 сек)\n"
+                "3. ⚪️ Выдох (4 сек)\n"
+                "4. ✋ Задержка (4 сек)"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await callback.message.answer("Не удалось загрузить анимацию, но дышим так: 4 сек вдох - 4 пауза - 4 выдох - 4 пауза.")
+        print(f"Ошибка GIF: {e}")
     
-    await callback.message.answer_animation(
-        animation=URLInputFile(gif_url),
-        caption="🌬 <b>Квадратное дыхание</b>\n\nСмотри на анимацию и дыши в ритме:\nВдох -> Задержка -> Выдох -> Задержка.",
-        parse_mode="HTML"
-    )
     await callback.answer()
 
 # --- АПАТИЯ ---
@@ -52,7 +66,7 @@ async def sos_anger(callback: types.CallbackQuery, state: FSMContext):
 @router.message(AngerState.venting)
 async def process_anger(message: types.Message, state: FSMContext):
     await message.reply("🔥🔥🔥 Сжигаю этот негатив...")
-    await asyncio.sleep(1) # Имитация работы
+    await asyncio.sleep(1)  # Имитация работы
     await message.answer("Готово. Пепел развеян. Как ты сейчас? Сделай глубокий вдох.")
     await state.clear()
 
