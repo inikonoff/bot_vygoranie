@@ -1,10 +1,11 @@
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import FSInputFile  # <--- Используем FSInputFile вместо URLInputFile
-import asyncio
+from aiogram.types import URLInputFile, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
 from src.keyboards import builders
-from src.services.llm import get_ai_response  # Убедись, что llm.py создан
+from src.services.llm import get_ai_response
+import asyncio
 
 router = Router()
 
@@ -14,23 +15,22 @@ class AIState(StatesGroup):
 class AngerState(StatesGroup):
     venting = State()
 
+# === ГЛАВНОЕ МЕНЮ РАЗДЕЛА ===
 @router.message(F.text == "🆘 SOS / Я киплю")
+@router.message(Command("sos"))
 async def sos_menu(message: types.Message):
     await message.answer("Что чувствуешь? Выбери, чтобы я помог:", reply_markup=builders.sos_keyboard())
 
-# --- ДЫХАНИЕ (С ЛОКАЛЬНОЙ ГИФКОЙ) ---
+# === 1. ДЫХАНИЕ ===
 @router.callback_query(F.data == "sos_breathe")
 async def sos_breathe(callback: types.CallbackQuery):
+    # Локальный файл надежнее всего. Если его нет, сработает try-except
     try:
-        # Используем локальный файл. Это 100% надежно.
-        # Убедись, что файл data/sq_br.jpg существует в репозитории!
-        gif_file = FSInputFile("data/sq_br.jpg")
-        
+        gif_file = FSInputFile("data/breathing.gif")
         await callback.message.answer_animation(
             animation=gif_file,
             caption=(
                 "🌬 <b>Квадратное дыхание</b>\n\n"
-                "Синхронизируйся с анимацией:\n"
                 "1. 🟢 Вдох (4 сек)\n"
                 "2. ✋ Задержка (4 сек)\n"
                 "3. ⚪️ Выдох (4 сек)\n"
@@ -38,25 +38,32 @@ async def sos_breathe(callback: types.CallbackQuery):
             ),
             parse_mode="HTML"
         )
-    except Exception as e:
-        await callback.message.answer("Не удалось загрузить анимацию, но дышим так: 4 сек вдох - 4 пауза - 4 выдох - 4 пауза.")
-        print(f"Ошибка GIF: {e}")
+    except:
+        # Запасной вариант с ссылкой, если файла нет
+        try:
+            await callback.message.answer_animation(
+                animation="https://i.gifer.com/7GCO.gif",
+                caption="🌬 <b>Дыши вместе с квадратом</b>\nВдох - Пауза - Выдох - Пауза (по 4 сек).",
+                parse_mode="HTML"
+            )
+        except:
+            await callback.message.answer("Инструкция: Вдох 4 сек -> Задержка 4 сек -> Выдох 4 сек -> Задержка 4 сек.")
     
     await callback.answer()
 
-# --- АПАТИЯ ---
+# === 2. ВИДЕО ОТ АПАТИИ ===
 @router.callback_query(F.data == "sos_apathy")
 async def sos_video(callback: types.CallbackQuery):
     await callback.message.answer("Посмотри это видео от Татьяны Мужицкой, оно помогает:\nhttps://www.youtube.com/shorts/VxJfaGCRIvM")
     await callback.answer()
 
-# --- ГНЕВ (Техника "Сжечь письмо") ---
+# === 3. СЖИГАНИЕ ГНЕВА ===
 @router.callback_query(F.data == "sos_anger")
 async def sos_anger(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "🔥 <b>Техника сброса гнева</b>\n\n"
-        "Напиши сюда всё, что тебя бесит. Не стесняйся в выражениях. "
-        "Я приму это сообщение и мы его ментально «сожжем».\n\n"
+        "Напиши сюда всё, что тебя бесит. Не стесняйся в выражениях.\n"
+        "Я приму это сообщение, и мы его ментально «сожжем».\n\n"
         "Пиши прямо сейчас:", 
         parse_mode="HTML"
     )
@@ -65,37 +72,65 @@ async def sos_anger(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(AngerState.venting)
 async def process_anger(message: types.Message, state: FSMContext):
-    await message.reply("🔥🔥🔥 Сжигаю этот негатив...")
-    await asyncio.sleep(1)  # Имитация работы
-    await message.answer("Готово. Пепел развеян. Как ты сейчас? Сделай глубокий вдох.")
+    msg = await message.reply("🔥🔥🔥 Сжигаю этот негатив...")
+    await asyncio.sleep(1.5) 
+    await msg.edit_text("🗑 Пепел развеян.\n\nКак ты сейчас? Сделай глубокий вдох.")
     await state.clear()
 
-# --- AI СОВЕТЫ ---
+# === 4. ЧАТ С ПСИХОЛОГОМ (AI) ===
 @router.callback_query(F.data == "sos_ai_chat")
 async def sos_ai_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
-        "🤖 <b>AI-Психолог</b>\n\n"
-        "Опиши свою ситуацию одним предложением. "
-        "Я поищу ответ в базе знаний или дам совет из общей практики.\n\n"
-        "Например: <i>«Как успокоиться перед совещанием?»</i>",
+        "🤖 <b>AI-Психолог на связи</b>\n\n"
+        "Напиши, что тебя беспокоит. Я здесь, чтобы выслушать и поддержать.\n"
+        "Мы можем общаться столько, сколько нужно.\n\n"
+        "<i>Напиши 'Стоп' или нажми кнопку ниже, чтобы закончить.</i>",
         parse_mode="HTML"
     )
     await state.set_state(AIState.waiting_for_query)
     await callback.answer()
 
+# Хендлер для ВЫХОДА из чата (кнопка)
+@router.callback_query(F.data == "ai_stop", AIState.waiting_for_query)
+async def sos_ai_stop_btn(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer("Диалог завершен. Береги себя! ❤️", reply_markup=builders.main_menu())
+    await callback.answer()
+
+# Хендлер для ОБЩЕНИЯ (ловит текст)
 @router.message(AIState.waiting_for_query)
 async def process_ai_query(message: types.Message, state: FSMContext):
-    wait_msg = await message.answer("⏳ Думаю...")
+    # 1. Проверяем, не нажал ли юзер кнопку меню (выход)
+    if message.text in ["📊 Диагностика (MBI)", "📝 Дневник", "🆘 SOS / Я киплю", "🧠 Мои Эмоции", "🧘 Ресурсы", "📋 Тест Бойко"]:
+        await state.clear()
+        await message.answer("Выхожу из режима AI...", reply_markup=builders.main_menu())
+        # Тут мы не можем перенаправить на другой хендлер автоматически, 
+        # поэтому просим нажать кнопку еще раз или просто выходим.
+        # Для лучшего UX просто выходим.
+        return
+
+    # 2. Проверяем команду стоп текстом
+    if message.text.lower().strip() in ["стоп", "stop", "хватит", "выход"]:
+        await state.clear()
+        await message.answer("Диалог завершен.", reply_markup=builders.main_menu())
+        return
+
+    # 3. Генерируем ответ
+    wait_msg = await message.answer("⏳ ...")
     
-    # Запрос к Groq (RAG)
     try:
-        # Сначала ищем в базе знаний (если настроил RAG)
-        # context = await db.search_knowledge_base(...) 
-        # Пока без поиска, просто LLM
+        # Тут можно добавить context из базы (RAG), если нужно
         response = await get_ai_response(message.text) 
-        await wait_msg.edit_text(response)
+        
+        # Клавиатура для выхода
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛑 Закончить диалог", callback_data="ai_stop")]
+        ])
+        
+        await wait_msg.edit_text(response, reply_markup=kb)
+        # ВАЖНО: Мы НЕ вызываем state.clear(), поэтому бот ждет следующее сообщение
+        
     except Exception as e:
         await wait_msg.edit_text("Ошибка связи с нейросетью. Попробуй позже.")
-        print(e)
-        
-    await state.clear()
+        print(f"AI Error: {e}")
+        await state.clear()
