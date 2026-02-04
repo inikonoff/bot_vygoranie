@@ -14,7 +14,7 @@ from config import config
 
 # Импорт хендлеров
 # ВАЖНО: Убедись, что все эти файлы существуют в папке src/handlers
-from src.handlers import start, testing, sos, tracker, emotions, resources  # <--- Добавил недостающие импорты
+from src.handlers import start, testing, sos, tracker, emotions, resources, chat  # <--- Добавил недостающие импорты
 
 # Импорт БД (если нужно инициализировать подключение)
 from src.database.supabase_client import db
@@ -76,6 +76,7 @@ async def main():
     dp.include_router(tracker.router)      # <--- Добавил роутер tracker
     dp.include_router(emotions.router)     # <--- Добавил роутер emotions
     dp.include_router(resources.router)    # <--- Добавил роутер resources
+    dp.include_router(chat.router)
 
     # 3. Настраиваем меню команд бота
     await setup_bot_commands(bot)
