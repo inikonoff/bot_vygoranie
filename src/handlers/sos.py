@@ -134,3 +134,4 @@ async def process_ai_query(message: types.Message, state: FSMContext):
         await wait_msg.edit_text("Ошибка связи с нейросетью. Попробуй позже.")
         print(f"AI Error: {e}")
         await state.clear()
+get_ai_response = get_groq_response
