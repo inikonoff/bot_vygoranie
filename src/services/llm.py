@@ -94,3 +94,4 @@ async def get_ai_response(user_text: str, context: str = "") -> str:
     except Exception as e:
         logger.error(f"Groq API Error: {e}")
         return "Я здесь. Давай просто помолчим немного."
+get_groq_response = get_ai_response
