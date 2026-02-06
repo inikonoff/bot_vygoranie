@@ -1,11 +1,11 @@
+import asyncio
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import URLInputFile, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from src.keyboards import builders
 from src.services.llm import get_ai_response
-import asyncio
 
 router = Router()
 
@@ -24,7 +24,7 @@ async def sos_menu(message: types.Message):
 # === 1. ДЫХАНИЕ ===
 @router.callback_query(F.data == "sos_breathe")
 async def sos_breathe(callback: types.CallbackQuery):
-    # Локальный файл надежнее всего. Если его нет, сработает try-except
+    # Локальный файл надежнее всего.
     try:
         gif_file = FSInputFile("data/breathing.gif")
         await callback.message.answer_animation(
@@ -39,7 +39,7 @@ async def sos_breathe(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
     except:
-        # Запасной вариант с ссылкой, если файла нет
+        # Запасной вариант с ссылкой
         try:
             await callback.message.answer_animation(
                 animation="https://i.gifer.com/7GCO.gif",
@@ -80,6 +80,9 @@ async def process_anger(message: types.Message, state: FSMContext):
 # === 4. ЧАТ С ПСИХОЛОГОМ (AI) ===
 @router.callback_query(F.data == "sos_ai_chat")
 async def sos_ai_start(callback: types.CallbackQuery, state: FSMContext):
+    # Очищаем историю при новом входе
+    await state.update_data(history=[])
+    
     await callback.message.answer(
         "🤖 <b>AI-Психолог на связи</b>\n\n"
         "Напиши, что тебя беспокоит. Я здесь, чтобы выслушать и поддержать.\n"
@@ -104,9 +107,6 @@ async def process_ai_query(message: types.Message, state: FSMContext):
     if message.text in ["📊 Диагностика (MBI)", "📝 Дневник", "🆘 SOS / Я киплю", "🧠 Мои Эмоции", "🧘 Ресурсы", "📋 Тест Бойко"]:
         await state.clear()
         await message.answer("Выхожу из режима AI...", reply_markup=builders.main_menu())
-        # Тут мы не можем перенаправить на другой хендлер автоматически, 
-        # поэтому просим нажать кнопку еще раз или просто выходим.
-        # Для лучшего UX просто выходим.
         return
 
     # 2. Проверяем команду стоп текстом
@@ -115,12 +115,30 @@ async def process_ai_query(message: types.Message, state: FSMContext):
         await message.answer("Диалог завершен.", reply_markup=builders.main_menu())
         return
 
-    # 3. Генерируем ответ
+    # 3. Подготовка запроса
     wait_msg = await message.answer("⏳ ...")
     
+    # Достаем историю из памяти
+    data = await state.get_data()
+    history = data.get("history", [])
+    
     try:
-        # Тут можно добавить context из базы (RAG), если нужно
-        response = await get_ai_response(message.text) 
+        # Передаем текст и историю в LLM
+        response = await get_ai_response(
+            user_text=message.text, 
+            conversation_history=history
+        )
+        
+        # Обновляем историю (добавляем пару вопрос-ответ)
+        history.append({"role": "user", "content": message.text})
+        history.append({"role": "assistant", "content": response})
+        
+        # Ограничиваем историю последними 10 сообщениями (5 пар), чтобы не переполнять память
+        if len(history) > 10:
+            history = history[-10:]
+            
+        # Сохраняем обновленную историю в State
+        await state.update_data(history=history)
         
         # Клавиатура для выхода
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -128,9 +146,8 @@ async def process_ai_query(message: types.Message, state: FSMContext):
         ])
         
         await wait_msg.edit_text(response, reply_markup=kb)
-        # ВАЖНО: Мы НЕ вызываем state.clear(), поэтому бот ждет следующее сообщение
         
     except Exception as e:
         await wait_msg.edit_text("Ошибка связи с нейросетью. Попробуй позже.")
         print(f"AI Error: {e}")
-        await state.clear()
+        # Не сбрасываем state, чтобы можно было попробовать еще раз
