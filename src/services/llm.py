@@ -304,65 +304,126 @@ SYSTEM_PROMPT = """
 async def get_ai_response(
     user_text: str, 
     context: str = "", 
-    conversation_history: Optional[List[Dict[str, str]]] = None
+    conversation_history: Optional[list] = None
 ) -> str:
     """
     Получить ответ от AI-психолога.
+    
+    Args:
+        user_text: Текст пользователя
+        context: Контекст разговора (устаревший параметр, лучше использовать conversation_history)
+        conversation_history: История диалога в формате списка сообщений
+        
+    Returns:
+        Ответ AI
     """
     if not client:
         return "⚠️ Ошибка: ключ API не настроен."
 
-    # 1. Формируем список сообщений
+    # Подготовка сообщений
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     
-    # Если есть контекст из базы знаний (RAG)
-    if context:
-        messages.append({"role": "system", "content": f"ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ИЗ МЕТОДИЧЕК:\n{context}"})
-
-    # Добавляем историю диалога (если есть), чтобы бот помнил контекст беседы
+    # Добавляем историю диалога, если есть
     if conversation_history:
-        # Берем последние 4 сообщения, чтобы не перегружать контекст
-        messages.extend(conversation_history[-4:])
+        for msg in conversation_history[-6:]:  # Берем последние 6 сообщений для контекста
+            messages.append(msg)
+    elif context:
+        # Для обратной совместимости
+        messages.append({"role": "system", "content": f"Контекст: {context}"})
     
-    # Добавляем текущее сообщение
+    # Добавляем текущее сообщение пользователя
     messages.append({"role": "user", "content": user_text})
 
     try:
         completion = await client.chat.completions.create(
-            model=MODEL_NAME, # Исправлена модель на рабочую
+            model=MODEL_NAME,  # Используем Llama 3 70B
             messages=messages,
-            temperature=0.6,
-            max_tokens=400,
+            temperature=0.7,  # Баланс между креативностью и стабильностью
+            max_tokens=300,   # Увеличено для более развернутых техник и психообразования
             top_p=0.9,
+            frequency_penalty=0.1,  # Слегка избегаем повторений
+            presence_penalty=0.1,   # Поощряем разнообразие
         )
         
         response = completion.choices[0].message.content
         
-        # Пост-обработка (защита от пустых ответов и мусора)
-        final_response = _postprocess_response(response)
+        # Пост-обработка ответа
+        response = _postprocess_response(response, user_text)
         
-        return final_response
+        return response
 
     except Exception as e:
         logger.error(f"Groq API Error: {e}", exc_info=True)
-        return "Я здесь. Я слышу тебя. (Произошла техническая заминка, но я всё равно рядом)."
+        # В случае ошибки возвращаем ответ присутствия
+        return "Я здесь. Просто побудем в тишине."
 
 
-def _postprocess_response(response: str) -> str:
-    """Чистит ответ от лишнего и гарантирует, что он не пустой."""
-    if not response:
-        return "Я слушаю..."
+async def get_groq_response(user_text: str, context: str = "") -> str:
+    """
+    Алиас для обратной совместимости.
+    """
+    return await get_ai_response(user_text, context)
 
-    # Убираем префиксы, если модель решила поиграть в ролевую игру
-    prefixes = ["Ассистент:", "Психолог:", "Assistant:", "AI:"]
-    for p in prefixes:
-        if response.startswith(p):
-            response = response.replace(p, "", 1)
+
+def _postprocess_response(response: str, user_input: str) -> str:
+    """
+    Пост-обработка ответа для улучшения качества.
     
-    response = response.strip()
-    
-    # Если после очистки пусто — возвращаем заглушку (это спасет от ошибки "message text is empty")
-    if not response:
-        return "Я здесь. Продолжай, пожалуйста."
+    Args:
+        response: Ответ от AI
+        user_input: Ввод пользователя
         
-    return response
+    Returns:
+        Обработанный ответ
+    """
+    # Убираем возможные префиксы типа "Ассистент:"
+    if response.startswith("Ассистент:") or response.startswith("Assistant:"):
+        response = response.split(":", 1)[1].strip()
+    
+    # Для кратких сообщений в острой боли оставляем короткий ответ
+    pain_keywords = ["плохо", "больно", "невыносимо", "не могу", "устал", "страшно"]
+    is_acute_pain = any(keyword in user_input.lower() for keyword in pain_keywords)
+    
+    if is_acute_pain and len(user_input.split()) <= 5:
+        # Берем только первое предложение для острой боли
+        sentences = response.split('.')
+        if sentences:
+            response = sentences[0] + '.'
+    
+    # Если ответ слишком длинный и это НЕ техника/психообразование
+    is_technique = any(word in response for word in ["попробуем", "техника", "правило", "способ"])
+    if not is_technique and len(response.split()) > 60:
+        sentences = response.split('. ')
+        if len(sentences) > 2:
+            response = '. '.join(sentences[:2]) + '.'
+    
+    return response.strip()
+
+
+class ConversationManager:
+    """
+    Менеджер для управления историей диалога.
+    """
+    def __init__(self, max_history_length: int = 10):
+        self.max_history_length = max_history_length
+        self.history = []
+    
+    def add_message(self, role: str, content: str):
+        """Добавить сообщение в историю."""
+        self.history.append({"role": role, "content": content})
+        
+        # Ограничиваем длину истории
+        if len(self.history) > self.max_history_length * 2:  # *2 потому что пары user/assistant
+            self.history = self.history[-(self.max_history_length * 2):]
+    
+    def get_history(self):
+        """Получить историю диалога."""
+        return self.history.copy()
+    
+    def clear_history(self):
+        """Очистить историю диалога."""
+        self.history.clear()
+
+
+# Пример использования менеджера диалога
+conversation_manager = ConversationManager()
