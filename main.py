@@ -198,11 +198,6 @@ async def keep_alive_ping():
         except Exception as e:
             logger.debug(f"Self-ping error: {e}")
 
-# Также в main.py нужно добавить переменную ENABLE_SELF_PING в startup
-# и создать задачу:
-if os.environ.get("ENABLE_SELF_PING", "false").lower() == "true":
-    asyncio.create_task(keep_alive_ping())
-
 
 async def database_health_check():
     """
@@ -390,7 +385,11 @@ async def main():
         # Graceful shutdown
         await shutdown(web_runner)
 
-
+# Также в main.py нужно добавить переменную ENABLE_SELF_PING в startup
+# и создать задачу:
+if os.environ.get("ENABLE_SELF_PING", "false").lower() == "true":
+    asyncio.create_task(keep_alive_ping())
+    
 if __name__ == "__main__":
     try:
         # Настройка для Windows (локальный запуск)
