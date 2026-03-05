@@ -1,25 +1,22 @@
-import asyncio
-import logging
 import os
 import sys
 import signal
-from contextlib import asynccontextmanager
+import logging
+import asyncio
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import BotCommand
+from aiogram.fsm.storage.memory import MemoryStorage
 
-# Импорт конфигурации
-from config import config
-
-# Импорт хендлеров
+from src.config import settings
 from src.handlers import start, testing, sos, tracker, emotions, resources, chat
-
-# Импорт БД
 from src.database.supabase_client import db
+from src.scheduler import run_scheduler
 
 # Настройка логирования
 logging.basicConfig(
@@ -34,16 +31,27 @@ logger = logging.getLogger(__name__)
 bot = None
 dp = None
 shutdown_event = asyncio.Event()
+polling_task = None
+keep_alive_task = None
+scheduler_task = None
+is_shutting_down = False
 
 
 # ============================================================================
-# ОБРАБОТКА СИГНАЛОВ (SIGTERM) ДЛЯ RENDER
+# ОБРАБОТКА СИГНАЛОВ
 # ============================================================================
 
 def handle_sigterm(signum, frame):
     """Обработчик сигнала SIGTERM от Render"""
+    global is_shutting_down
+    if is_shutting_down:
+        return
+    
     logger.info("📡 Received SIGTERM signal, initiating graceful shutdown...")
-    asyncio.create_task(trigger_shutdown())
+    is_shutting_down = True
+    
+    loop = asyncio.get_running_loop()
+    loop.call_soon_threadsafe(lambda: asyncio.create_task(trigger_shutdown()))
 
 
 async def trigger_shutdown():
@@ -52,30 +60,28 @@ async def trigger_shutdown():
 
 
 # ============================================================================
-# ФУНКЦИИ ДЛЯ НАСТРОЙКИ БОТА
+# НАСТРОЙКА БОТА
 # ============================================================================
 
 async def setup_bot_commands(bot_instance: Bot):
-    """
-    Устанавливает меню команд бота, которые видны пользователям.
-    """
+    """Устанавливает меню команд бота"""
     bot_commands = [
-        BotCommand(command="/start", description="🔄 Рестарт (Главное меню)"),
+        BotCommand(command="/start", description="🔄 Главное меню"),
         BotCommand(command="/sos", description="🆘 Срочная помощь"),
-        BotCommand(command="/diary", description="📝 Заполнить дневник"),
-        BotCommand(command="/mbi", description="📊 Тест на выгорание"),
-        BotCommand(command="/help", description="📖 О боте")
+        BotCommand(command="/diary", description="📝 Дневник"),
+        BotCommand(command="/help", description="📖 О боте"),
+        BotCommand(command="/remind", description="⏰ Напоминания")
     ]
     await bot_instance.set_my_commands(bot_commands)
-    logger.info("✅ Bot commands menu has been set up")
+    logger.info("✅ Bot commands menu installed")
 
 
 # ============================================================================
-# ВЕБ-СЕРВЕР ДЛЯ RENDER (Health Check)
+# ВЕБ-СЕРВЕР ДЛЯ RENDER
 # ============================================================================
 
 async def health_check(request):
-    """Health check endpoint для Render/UptimeRobot"""
+    """Health check endpoint"""
     return web.json_response({
         "status": "healthy",
         "service": "mental-health-bot",
@@ -84,15 +90,12 @@ async def health_check(request):
 
 
 async def ping(request):
-    """Простой ping endpoint"""
-    return web.json_response({
-        "pong": True,
-        "timestamp": datetime.utcnow().isoformat()
-    })
+    """Ping endpoint"""
+    return web.json_response({"pong": True, "timestamp": datetime.utcnow().isoformat()})
 
 
 async def status(request):
-    """Детальный статус бота"""
+    """Статус бота"""
     global bot
     
     try:
@@ -105,31 +108,19 @@ async def status(request):
                     "id": bot_info.id,
                     "name": bot_info.first_name
                 },
-                "database": "connected" if db and hasattr(db, '_is_connected') and db._is_connected else "disconnected",
+                "database": "connected" if db and db._is_connected else "disconnected",
+                "polling": polling_task is not None and not polling_task.done(),
                 "timestamp": datetime.utcnow().isoformat()
             })
         else:
-            return web.json_response({
-                "status": "initializing",
-                "message": "Bot is starting up",
-                "timestamp": datetime.utcnow().isoformat()
-            })
+            return web.json_response({"status": "initializing"})
     except Exception as e:
-        logger.error(f"Status check error: {e}")
-        return web.json_response({
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat()
-        }, status=500)
+        return web.json_response({"status": "error", "error": str(e)}, status=500)
 
 
 async def start_web_server():
-    """
-    Запускает веб-сервер с несколькими endpoints для мониторинга.
-    """
+    """Запуск веб-сервера для мониторинга"""
     app = web.Application()
-    
-    # Регистрируем endpoints
     app.router.add_get('/', health_check)
     app.router.add_get('/health', health_check)
     app.router.add_get('/ping', ping)
@@ -138,28 +129,20 @@ async def start_web_server():
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Render передает порт через переменную окружения PORT
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     
     logger.info(f"✅ Web server started on port {port}")
-    logger.info(f"📌 Available endpoints: /, /health, /ping, /status")
-    
     return runner
 
 
 # ============================================================================
-# ПЕРИОДИЧЕСКИЕ ЗАДАЧИ
+# ФОНОВЫЕ ЗАДАЧИ
 # ============================================================================
 
-# В main.py нужно заменить функцию keep_alive_ping на эту:
-
 async def keep_alive_ping():
-    """
-    Самопинг для поддержания активности (каждые 5 минут)
-    С retry-логикой и правильным импортом aiohttp
-    """
+    """Самопинг для поддержания активности (с retry-логикой)"""
     url = os.environ.get("RENDER_EXTERNAL_URL")
     
     if not url:
@@ -168,15 +151,13 @@ async def keep_alive_ping():
     
     logger.info("🔄 Self-ping task started")
     
-    while True:
+    while not is_shutting_down:
         try:
             await asyncio.sleep(300)  # 5 минут
             
-            # Retry logic: 3 попытки с экспоненциальной задержкой
+            import aiohttp
             for attempt in range(3):
                 try:
-                    # ИСПРАВЛЕНО: используем aiohttp напрямую, не из web
-                    import aiohttp
                     async with aiohttp.ClientSession() as session:
                         async with session.get(f"{url}/ping", timeout=5) as response:
                             if response.status == 200:
@@ -185,83 +166,88 @@ async def keep_alive_ping():
                             else:
                                 logger.warning(f"⚠️ Self-ping returned {response.status}")
                 except Exception as e:
-                    if attempt < 2:  # не последняя попытка
-                        wait_time = 2 ** attempt  # 1, 2, 4 секунды
-                        logger.debug(f"Self-ping attempt {attempt+1} failed, retrying in {wait_time}s: {e}")
+                    if attempt < 2:
+                        wait_time = 2 ** attempt
                         await asyncio.sleep(wait_time)
                     else:
                         logger.warning(f"⚠️ Self-ping failed after 3 attempts: {e}")
                         
         except asyncio.CancelledError:
-            logger.info("🛑 Self-ping task stopped")
             break
         except Exception as e:
             logger.debug(f"Self-ping error: {e}")
-
-
-async def database_health_check():
-    """
-    Периодическая проверка соединения с БД (каждые 15 минут)
-    """
-    logger.info("🔄 Database health check task started")
     
-    while True:
+    logger.info("🛑 Self-ping task stopped")
+
+
+async def database_keep_alive():
+    """Пинг БД каждые 12 часов для предотвращения засыпания"""
+    logger.info("🔄 Database keep-alive task started")
+    
+    while not is_shutting_down:
         try:
-            await asyncio.sleep(900)  # 15 минут
-            
-            if db and hasattr(db, 'health_check'):
-                result = await db.health_check()
-                if result:
-                    logger.debug("✅ Database connection is healthy")
-                else:
-                    logger.warning("⚠️ Database health check failed, attempting reconnect...")
-                    if hasattr(db, 'connect'):
-                        await db.connect()
-            else:
-                # Простой ping БД
-                try:
-                    await db.execute("SELECT 1")
-                    logger.debug("✅ Database ping successful")
-                except Exception as e:
-                    logger.error(f"❌ Database ping failed: {e}")
-                    
+            await asyncio.sleep(43200)  # 12 часов
+            await db.ping()
         except asyncio.CancelledError:
-            logger.info("🛑 Database health check stopped")
             break
         except Exception as e:
-            logger.error(f"❌ Error in database health check: {e}")
+            logger.error(f"Database keep-alive error: {e}")
+    
+    logger.info("🛑 Database keep-alive task stopped")
 
 
 # ============================================================================
-# ОСНОВНАЯ ЛОГИКА
+# POLLING
+# ============================================================================
+
+async def run_polling_with_auto_restart():
+    """Запуск polling с автоматическим перезапуском при ошибках"""
+    global is_shutting_down
+    
+    while not is_shutting_down:
+        try:
+            logger.info("🚀 Starting polling...")
+            await dp.start_polling(bot)
+            logger.info("✅ Polling completed normally")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            if is_shutting_down:
+                break
+            logger.error(f"❌ Polling error: {e}", exc_info=True)
+            await asyncio.sleep(5)
+    
+    logger.info("📡 Polling stopped")
+
+
+# ============================================================================
+# STARTUP / SHUTDOWN
 # ============================================================================
 
 async def startup():
-    """Запуск всех компонентов бота"""
-    global bot, dp
+    """Запуск всех компонентов"""
+    global bot, dp, polling_task, keep_alive_task, scheduler_task
     
     logger.info("=" * 50)
     logger.info("🚀 Starting Mental Health Bot...")
     logger.info("=" * 50)
     
     try:
-        # 1. Создаем экземпляры Бота и Диспетчера
+        # 1. Создаем бота и диспетчера
         bot = Bot(
-            token=config.BOT_TOKEN,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+            token=settings.BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
         )
-        dp = Dispatcher()
+        dp = Dispatcher(storage=MemoryStorage())
         
-        # 2. Проверяем подключение к БД
-        logger.info("📦 Checking database connection...")
-        if db:
-            try:
-                await db.connect()
-                logger.info("✅ Database connected")
-            except Exception as e:
-                logger.warning(f"⚠️ Database connection issue: {e}")
+        # 2. Подключаемся к БД
+        logger.info("📦 Connecting to database...")
+        try:
+            await db.connect()
+        except Exception as e:
+            logger.warning(f"⚠️ Database connection issue: {e}")
         
-        # 3. Регистрируем роутеры (подключаем логику)
+        # 3. Регистрируем хендлеры
         logger.info("🔧 Registering handlers...")
         dp.include_router(start.router)
         dp.include_router(testing.router)
@@ -272,16 +258,28 @@ async def startup():
         dp.include_router(chat.router)
         logger.info("✅ Handlers registered")
         
-        # 4. Настраиваем меню команд бота
+        # 4. Настраиваем меню команд
         await setup_bot_commands(bot)
         
-        # 5. Удаляем вебхук (полезно при переходе на поллинг)
+        # 5. Удаляем вебхук
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("✅ Webhook deleted")
         
-        # 6. Получаем информацию о боте
+        # 6. Информация о боте
         bot_info = await bot.get_me()
         logger.info(f"🤖 Bot: @{bot_info.username} (ID: {bot_info.id})")
+        
+        # 7. Запускаем фоновые задачи
+        if os.environ.get("ENABLE_SELF_PING", "false").lower() == "true":
+            keep_alive_task = asyncio.create_task(keep_alive_ping())
+        
+        # Запускаем пинг БД всегда
+        keep_alive_task = asyncio.create_task(database_keep_alive())
+        
+        # Запускаем планировщик
+        scheduler_task = asyncio.create_task(run_scheduler(bot))
+        
+        # 8. Запускаем polling
+        polling_task = asyncio.create_task(run_polling_with_auto_restart())
         
         logger.info("=" * 50)
         logger.info("✅ Bot started successfully!")
@@ -292,32 +290,28 @@ async def startup():
         raise
 
 
-async def run_polling():
-    """Запуск polling с обработкой завершения"""
-    global bot, dp
-    
-    try:
-        logger.info("📡 Starting polling...")
-        await dp.start_polling(bot)
-    except asyncio.CancelledError:
-        logger.info("🛑 Polling task cancelled")
-    except Exception as e:
-        logger.error(f"❌ Polling error: {e}", exc_info=True)
-    finally:
-        logger.info("📡 Polling stopped")
-
-
 async def shutdown(web_runner):
-    """Graceful shutdown всех компонентов"""
-    global bot
+    """Graceful shutdown"""
+    global polling_task, keep_alive_task, scheduler_task, is_shutting_down
     
     logger.info("=" * 50)
     logger.info("🛑 Shutting down Mental Health Bot...")
     logger.info("=" * 50)
     
-    # Даём время на завершение текущих задач
-    logger.info("⏳ Waiting for ongoing tasks to complete (up to 10 seconds)...")
+    is_shutting_down = True
+    
+    # Даем время на завершение текущих задач
+    logger.info("⏳ Waiting for ongoing tasks...")
     await asyncio.sleep(10)
+    
+    # Отменяем задачи
+    for task in [polling_task, keep_alive_task, scheduler_task]:
+        if task and not task.done():
+            task.cancel()
+    
+    # Ждем завершения задач
+    if any([polling_task, keep_alive_task, scheduler_task]):
+        await asyncio.gather(*[t for t in [polling_task, keep_alive_task, scheduler_task] if t], return_exceptions=True)
     
     # Останавливаем веб-сервер
     if web_runner:
@@ -326,73 +320,50 @@ async def shutdown(web_runner):
         logger.info("✅ Web server stopped")
     
     # Закрываем соединение с БД
-    if db and hasattr(db, 'close'):
+    if db:
         logger.info("🛑 Closing database connection...")
         await db.close()
-        logger.info("✅ Database connection closed")
     
     # Закрываем сессию бота
     if bot:
         logger.info("🛑 Closing bot session...")
         await bot.session.close()
-        logger.info("✅ Bot session closed")
     
     logger.info("👋 Goodbye!")
     logger.info("=" * 50)
 
 
+# ============================================================================
+# MAIN
+# ============================================================================
+
 async def main():
     """Главная функция"""
-    # Регистрируем обработчик SIGTERM для Render
+    # Регистрируем обработчик SIGTERM
     signal.signal(signal.SIGTERM, handle_sigterm)
     logger.info("✅ SIGTERM handler registered")
     
     web_runner = None
     
     try:
-        # Запускаем веб-сервер для мониторинга
+        # Запускаем веб-сервер
         web_runner = await start_web_server()
         
         # Запускаем бота
         await startup()
         
-        # Запускаем фоновые задачи
-        tasks = []
-        
-        # Самопинг (опционально)
-        if os.environ.get("ENABLE_SELF_PING", "false").lower() == "true":
-            tasks.append(asyncio.create_task(keep_alive_ping()))
-        
-        # Проверка БД (если нужно)
-        if os.environ.get("ENABLE_DB_HEALTH_CHECK", "false").lower() == "true":
-            tasks.append(asyncio.create_task(database_health_check()))
-        
-        # Запускаем polling (блокирующая операция)
-        await run_polling()
+        # Ждем сигнала завершения
+        await shutdown_event.wait()
         
     except Exception as e:
-        logger.error(f"❌ Fatal error in main: {e}", exc_info=True)
+        logger.error(f"❌ Fatal error: {e}", exc_info=True)
         
     finally:
-        # Отменяем фоновые задачи
-        for task in tasks:
-            task.cancel()
-        
-        # Дожидаемся завершения задач
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Graceful shutdown
         await shutdown(web_runner)
 
-# Также в main.py нужно добавить переменную ENABLE_SELF_PING в startup
-# и создать задачу:
-if os.environ.get("ENABLE_SELF_PING", "false").lower() == "true":
-    asyncio.create_task(keep_alive_ping())
-    
+
 if __name__ == "__main__":
     try:
-        # Настройка для Windows (локальный запуск)
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
