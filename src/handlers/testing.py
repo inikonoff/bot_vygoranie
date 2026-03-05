@@ -1,142 +1,185 @@
 import json
+import logging
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from src.keyboards import builders
-from src.services.scoring import calculate_mbi, calculate_boyko  # <--- Добавил calculate_boyko
-from src.database.supabase_client import db
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from src.keyboards import builders
+from src.services.scoring import (
+    calculate_mbi, calculate_boyko, calculate_phq9, 
+    calculate_gad7, calculate_pss10
+)
+from src.database.supabase_client import db
+from src.states import TestStates
+from src.services.llm import client, MODEL_NAME
+
+logger = logging.getLogger(__name__)
 router = Router()
 
-# Обновляем класс состояний
-class TestStates(StatesGroup):
-    mbi_q = State()
-    boyko_q = State()  # <--- Добавил новое состояние для теста Бойко
+# Загрузка вопросов
+try:
+    with open("data/mbi_test.json", "r", encoding="utf-8") as f:
+        MBI_QUESTIONS = json.load(f)
+except:
+    MBI_QUESTIONS = []
+    logger.error("Failed to load mbi_test.json")
 
-# Загрузка вопросов MBI
-with open("data/mbi_test.json", "r", encoding="utf-8") as f:
-    MBI_QUESTIONS = json.load(f)
-
-# Загрузка вопросов Бойко
 try:
     with open("data/boyko_test.json", "r", encoding="utf-8") as f:
         BOYKO_QUESTIONS = json.load(f)
 except:
-    BOYKO_QUESTIONS = []  # Заглушка, если файла нет
+    BOYKO_QUESTIONS = []
+    logger.error("Failed to load boyko_test.json")
 
-# --- ЛОГИКА ТЕСТА MBI ---
+try:
+    with open("data/phq9_test.json", "r", encoding="utf-8") as f:
+        PHQ9_QUESTIONS = json.load(f)
+except:
+    PHQ9_QUESTIONS = []
+    logger.error("Failed to load phq9_test.json")
 
-@router.message(F.text == "📊 Диагностика (MBI)")
-async def start_mbi(message: types.Message, state: FSMContext):
-    await state.set_state(TestStates.mbi_q)
-    await state.update_data(q_index=0, answers={})
-    
-    q = MBI_QUESTIONS[0]
-    txt = f"Вопрос 1/22:\n\n<b>{q['text']}</b>\n\n0 - Никогда\n6 - Каждый день"
-    await message.answer(txt, reply_markup=builders.scale_keyboard(), parse_mode="HTML")
+try:
+    with open("data/gad7_test.json", "r", encoding="utf-8") as f:
+        GAD7_QUESTIONS = json.load(f)
+except:
+    GAD7_QUESTIONS = []
+    logger.error("Failed to load gad7_test.json")
 
-@router.callback_query(TestStates.mbi_q, F.data.startswith("mbi_"))
-async def process_mbi_answer(callback: types.CallbackQuery, state: FSMContext):
-    score = int(callback.data.split("_")[1])
-    data = await state.get_data()
-    idx = data['q_index']
-    answers = data['answers']
+try:
+    with open("data/pss10_test.json", "r", encoding="utf-8") as f:
+        PSS10_QUESTIONS = json.load(f)
+except:
+    PSS10_QUESTIONS = []
+    logger.error("Failed to load pss10_test.json")
+
+
+# ============================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================================
+
+async def analyze_test_result_with_llm(test_type: str, scores: dict, user_id: int) -> str:
+    """Отправляет результаты теста в LLM для получения развернутого анализа"""
     
-    # Save answer using ID from JSON (idx + 1)
-    answers[idx + 1] = score
+    if not client:
+        return "Анализ временно недоступен."
     
-    next_idx = idx + 1
-    
-    if next_idx < len(MBI_QUESTIONS):
-        await state.update_data(q_index=next_idx, answers=answers)
-        q = MBI_QUESTIONS[next_idx]
-        txt = f"Вопрос {next_idx + 1}/22:\n\n<b>{q['text']}</b>\n\n0 - Никогда\n6 - Каждый день"
-        await callback.message.edit_text(txt, reply_markup=builders.scale_keyboard(), parse_mode="HTML")
-    else:
-        # Finish
-        result = calculate_mbi(answers)
-        risk = await db.save_mbi_result(callback.from_user.id, result)
+    prompts = {
+        "mbi": f"""
+        Проанализируй результаты теста MBI (Maslach Burnout Inventory) и дай развернутый ответ из 3-4 абзацев.
         
-        txt = (
-            f"🏁 <b>Тест завершен!</b>\n\n"
-            f"🤯 Истощение: {result['ee']} (Норма &lt; 16)\n"
-            f"😐 Цинизм: {result['dp']} (Норма &lt; 9)\n"
-            f"📉 Редукция: {result['pa']} (Норма &gt; 30)\n\n"
+        Результаты:
+        - Эмоциональное истощение (EE): {scores['ee']} баллов (норма < 16)
+        - Деперсонализация/Цинизм (DP): {scores['dp']} баллов (норма < 9)
+        - Редукция достижений (PA): {scores['pa']} баллов (норма > 30)
+        
+        В ответе:
+        1. Объясни простым языком, что означают эти цифры
+        2. На что обратить внимание в первую очередь
+        3. Дай 2-3 конкретных совета, что делать дальше
+        """,
+        
+        "boyko": f"""
+        Проанализируй результаты теста Бойко на эмоциональное выгорание.
+        
+        Результаты по фазам:
+        - Фаза напряжения: {scores['tension']} баллов
+        - Фаза резистенции (сопротивления): {scores['resistance']} баллов
+        - Фаза истощения: {scores['exhaustion']} баллов
+        
+        Дай развернутый анализ:
+        1. Что показывает каждая фаза
+        2. Какие симптомы характерны для этих значений
+        3. Что делать в первую очередь
+        """,
+        
+        "phq9": f"""
+        Проанализируй результаты теста PHQ-9 (скрининг депрессии).
+        
+        Общий балл: {scores['total']}
+        Уровень: {scores['level']}
+        
+        Дай развернутый анализ и рекомендации.
+        """,
+        
+        "gad7": f"""
+        Проанализируй результаты теста GAD-7 (скрининг тревоги).
+        
+        Общий балл: {scores['total']}
+        Уровень: {scores['level']}
+        
+        Дай развернутый анализ и рекомендации.
+        """,
+        
+        "pss10": f"""
+        Проанализируй результаты теста PSS-10 (шкала воспринимаемого стресса).
+        
+        Общий балл: {scores['total']}
+        Уровень: {scores['level']}
+        
+        Дай развернутый анализ и рекомендации по снижению стресса.
+        """
+    }
+    
+    if test_type not in prompts:
+        return "Неизвестный тип теста."
+    
+    try:
+        completion = await client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Ты - психолог, который дает развернутые, понятные и поддерживающие анализы результатов тестов. Используй теплый, эмпатичный тон."},
+                {"role": "user", "content": prompts[test_type]}
+            ],
+            temperature=0.7,
+            max_tokens=700  # Для развернутого ответа
         )
         
-        if risk == "red":
-            txt += "⚠️ <b>Высокий риск выгорания!</b> Рекомендуем режим 'SOS' и отдых."
-        elif risk == "yellow":
-            txt += "⚠️ Есть признаки напряжения. Следите за ресурсом."
-        else:
-            txt += "✅ Все в норме. Так держать!"
-            
-        await callback.message.edit_text(txt, parse_mode="HTML")
-        await state.clear()
-    
-    await callback.answer()
+        return completion.choices[0].message.content
+    except Exception as e:
+        logger.error(f"LLM analysis error: {e}")
+        return "Не удалось получить развернутый анализ. Пожалуйста, попробуйте позже."
 
-# --- ЛОГИКА ТЕСТА БОЙКО ---
 
-@router.message(F.text == "📋 Тест Бойко")
-async def start_boyko(message: types.Message, state: FSMContext):
-    if not BOYKO_QUESTIONS:
-        await message.answer("Файл с тестом Бойко не найден или пуст.")
-        return
+# ============================================================================
+# МЕНЮ ДИАГНОСТИКИ
+# ============================================================================
 
-    await state.set_state(TestStates.boyko_q)
-    await state.update_data(q_index=0, answers={})
-    
-    q = BOYKO_QUESTIONS[0]
-    # Используем yes_no_keyboard
+@router.message(F.text == "📊 Диагностика")
+async def diagnostic_menu_handler(message: types.Message):
+    """Показывает меню выбора теста"""
     await message.answer(
-        f"Вопрос 1/{len(BOYKO_QUESTIONS)}:\n\n<b>{q['text']}</b>", 
-        reply_markup=builders.yes_no_keyboard(), 
-        parse_mode="HTML"
+        "📋 **Выберите тип диагностики**\n\n"
+        "• **MBI** - профессиональное выгорание (22 вопроса)\n"
+        "• **PHQ-9** - скрининг депрессии (9 вопросов)\n"
+        "• **GAD-7** - скрининг тревоги (7 вопросов)\n"
+        "• **PSS-10** - уровень стресса (10 вопросов)\n"
+        "• **Тест Бойко** - глубокая диагностика выгорания (84 вопроса)",
+        reply_markup=builders.diagnostic_menu(),
+        parse_mode="Markdown"
     )
 
-@router.callback_query(TestStates.boyko_q, F.data.startswith("boyko_"))
-async def process_boyko_answer(callback: types.CallbackQuery, state: FSMContext):
-    # Превращаем "boyko_yes" в 1, "boyko_no" в 0
-    choice = 1 if callback.data == "boyko_yes" else 0
+
+@router.callback_query(F.data.startswith("diag_"))
+async def process_diagnostic_choice(callback: types.CallbackQuery, state: FSMContext):
+    """Обработка выбора теста из меню"""
+    test_type = callback.data.split("_")[1]
     
-    data = await state.get_data()
-    idx = data['q_index']
-    answers = data['answers']
-    
-    # Сохраняем ответ
-    answers[idx + 1] = choice
-    
-    next_idx = idx + 1
-    
-    if next_idx < len(BOYKO_QUESTIONS):
-        await state.update_data(q_index=next_idx, answers=answers)
-        q = BOYKO_QUESTIONS[next_idx]
-        await callback.message.edit_text(
-            f"Вопрос {next_idx + 1}/{len(BOYKO_QUESTIONS)}:\n\n<b>{q['text']}</b>",
-            reply_markup=builders.yes_no_keyboard(),
-            parse_mode="HTML"
-        )
-    else:
-        # Финиш
-        result = calculate_boyko(answers)
-        
-        # Сохраняем в базу (тип теста 'boyko')
-        # Важно: убедись, что db.save_mbi_result умеет сохранять и boyko, 
-        # или используй универсальный метод save_test_result
-        # Для простоты используем тот же метод, но пометим в базе
-        risk = "green"  # Логику риска для Бойко можно дописать позже
-        
-        # Формируем отчет
-        txt = (
-            f"🏁 <b>Тест Бойко завершен!</b>\n\n"
-            f"😬 Напряжение: {result['tension']}\n"
-            f"🛡 Резистенция: {result['resistance']}\n"
-            f"🔋 Истощение: {result['exhaustion']}\n\n"
-            f"Это более глубокий тест. Высокие баллы по шкале «Истощение» говорят о серьезном выгорании."
-        )
-        
-        await callback.message.edit_text(txt, parse_mode="HTML")
-        await state.clear()
+    if test_type == "mbi":
+        await start_mbi(callback.message, state)
+    elif test_type == "boyko":
+        await start_boyko(callback.message, state)
+    elif test_type == "phq9":
+        await start_phq9(callback.message, state)
+    elif test_type == "gad7":
+        await start_gad7(callback.message, state)
+    elif test_type == "pss10":
+        await start_pss10(callback.message, state)
+    elif test_type == "my_results":
+        await show_my_results(callback.message)
     
     await callback.answer()
+
+
+# ============================================================================
+# MBI (Maslach Burnout Inventory)
+# =========================================================================
