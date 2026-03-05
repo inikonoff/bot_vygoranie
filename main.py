@@ -153,10 +153,12 @@ async def start_web_server():
 # ПЕРИОДИЧЕСКИЕ ЗАДАЧИ
 # ============================================================================
 
+# В main.py нужно заменить функцию keep_alive_ping на эту:
+
 async def keep_alive_ping():
     """
     Самопинг для поддержания активности (каждые 5 минут)
-    Резервный вариант, если UptimeRobot не используется
+    С retry-логикой и правильным импортом aiohttp
     """
     url = os.environ.get("RENDER_EXTERNAL_URL")
     
@@ -170,19 +172,36 @@ async def keep_alive_ping():
         try:
             await asyncio.sleep(300)  # 5 минут
             
-            # Пингуем себя
-            async with web.ClientSession() as session:
-                async with session.get(f"{url}/ping", timeout=5) as response:
-                    if response.status == 200:
-                        logger.debug("✅ Self-ping successful")
+            # Retry logic: 3 попытки с экспоненциальной задержкой
+            for attempt in range(3):
+                try:
+                    # ИСПРАВЛЕНО: используем aiohttp напрямую, не из web
+                    import aiohttp
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(f"{url}/ping", timeout=5) as response:
+                            if response.status == 200:
+                                logger.debug("✅ Self-ping successful")
+                                break
+                            else:
+                                logger.warning(f"⚠️ Self-ping returned {response.status}")
+                except Exception as e:
+                    if attempt < 2:  # не последняя попытка
+                        wait_time = 2 ** attempt  # 1, 2, 4 секунды
+                        logger.debug(f"Self-ping attempt {attempt+1} failed, retrying in {wait_time}s: {e}")
+                        await asyncio.sleep(wait_time)
                     else:
-                        logger.warning(f"⚠️ Self-ping returned {response.status}")
+                        logger.warning(f"⚠️ Self-ping failed after 3 attempts: {e}")
                         
         except asyncio.CancelledError:
             logger.info("🛑 Self-ping task stopped")
             break
         except Exception as e:
-            logger.debug(f"Self-ping failed: {e}")
+            logger.debug(f"Self-ping error: {e}")
+
+# Также в main.py нужно добавить переменную ENABLE_SELF_PING в startup
+# и создать задачу:
+if os.environ.get("ENABLE_SELF_PING", "false").lower() == "true":
+    asyncio.create_task(keep_alive_ping())
 
 
 async def database_health_check():
