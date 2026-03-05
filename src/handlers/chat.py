@@ -1,25 +1,59 @@
-# src/handlers/chat.py
+import logging
 from aiogram import Router, F, types
-from aiogram.types import Message
-from src.services.llm import get_groq_response # Предполагаем, что у тебя есть этот файл
-# Если llm.py нет, ниже я дам его код
+from aiogram.fsm.context import FSMContext
 
+from src.services.llm import get_ai_response
+from src.keyboards import builders
+
+logger = logging.getLogger(__name__)
 router = Router()
 
-@router.message(F.text)
-async def chat_logic(message: Message):
+
+@router.message(F.text, ~F.text.startswith("/"))
+async def chat_logic(message: types.Message, state: FSMContext):
     """
-    Ловит любое текстовое сообщение, которое не является командой.
+    Ловит любое текстовое сообщение, которое не является командой,
+    ТОЛЬКО если пользователь не находится ни в каком FSM состоянии.
     """
+    # Проверяем, не в состоянии ли пользователь
+    current_state = await state.get_state()
+    
+    if current_state is not None:
+        logger.debug(f"User in state {current_state}, skipping chat handler")
+        return
+    
     user_text = message.text
     
-    # Отправляем "печатает...", чтобы юзер видел активность
+    # Проверяем, не нажал ли юзер кнопку меню
+    menu_buttons = [
+        "📊 Диагностика", "📝 Дневник", "🆘 SOS / Я киплю", 
+        "🧠 Мои Эмоции", "🧘 Ресурсы", "📋 Тест Бойко", "📈 Моя динамика"
+    ]
+    
+    if user_text in menu_buttons:
+        return
+    
+    # Отправляем "печатает..."
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     
     try:
-        # Отправляем запрос в Groq (LLM)
-        # Если у тебя нет RAG (базы знаний), просто шлем текст
-        response_text = await get_groq_response(user_text) 
-        await message.answer(response_text)
+        # Отправляем запрос в LLM
+        response_text = await get_ai_response(user_text)
+        
+        # Если ответ слишком длинный, разбиваем на части
+        if len(response_text) > 4000:
+            parts = [response_text[i:i+4000] for i in range(0, len(response_text), 4000)]
+            for i, part in enumerate(parts):
+                if i == len(parts) - 1:
+                    await message.answer(part)
+                else:
+                    await message.answer(part + "\n\n(продолжение следует...)")
+        else:
+            await message.answer(response_text)
+            
     except Exception as e:
-        await message.answer(f"Произошла ошибка при обращении к нейросети: {e}")
+        logger.error(f"AI Error in chat: {e}", exc_info=True)
+        await message.answer(
+            "Извини, сейчас не могу ответить. Попробуй позже или воспользуйся меню.",
+            reply_markup=builders.main_menu()
+        )
