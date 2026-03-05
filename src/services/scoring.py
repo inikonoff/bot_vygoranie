@@ -1,6 +1,5 @@
 def calculate_mbi(answers: dict):
-    # Ключи из PDF 1 стр 2
-    # Ответы приходят 0-6
+    """Расчет MBI (Maslach Burnout Inventory)"""
     ee_indices = [1, 2, 3, 6, 8, 13, 14, 16, 20]  # Эмоциональное истощение
     dp_indices = [5, 10, 11, 15, 22]              # Деперсонализация
     pa_indices = [4, 7, 9, 12, 17, 18, 19, 21]    # Редукция достижений (обратная шкала)
@@ -19,37 +18,132 @@ def calculate_mbi(answers: dict):
     return scores
 
 
+# ПРАВИЛЬНЫЕ КЛЮЧИ ДЛЯ ТЕСТА БОЙКО (на основе методики)
+BOYKO_KEYS = {
+    "tension": {
+        "переживание_психотравмирующих_обстоятельств": [1, 13, 25, 37, 49, 61, 73],
+        "неудовлетворенность_собой": [2, 14, 26, 38, 50, 62, 74],
+        "загнанность_в_клетку": [3, 15, 27, 39, 51, 63, 75],
+        "тревога_и_депрессия": [4, 16, 28, 40, 52, 64, 76]
+    },
+    "resistance": {
+        "неадекватное_реагирование": [5, 17, 29, 41, 53, 65, 77],
+        "эмоционально_нравственная_дезориентация": [6, 18, 30, 42, 54, 66, 78],
+        "экономия_эмоций": [7, 19, 31, 43, 55, 67, 79],
+        "редукция_профессиональных_обязанностей": [8, 20, 32, 44, 56, 68, 80]
+    },
+    "exhaustion": {
+        "эмоциональный_дефицит": [9, 21, 33, 45, 57, 69, 81],
+        "эмоциональная_отстраненность": [10, 22, 34, 46, 58, 70, 82],
+        "личностная_отстраненность_деперсонализация": [11, 23, 35, 47, 59, 71, 83],
+        "психосоматические_нарушения": [12, 24, 36, 48, 60, 72, 84]
+    }
+}
+
+
 def calculate_boyko(answers: dict):
     """
+    Расчет теста Бойко с правильными ключами
     answers: словарь {номер_вопроса: 1 (Да) или 0 (Нет)}
-    В реальности здесь должны быть ключи (номера вопросов) для каждой фазы.
-    Для старта мы просто посчитаем общее количество "Да".
     """
-
-    # В будущем сюда надо вписать точные номера вопросов из PDF для каждой фазы
-    # Пока считаем упрощенно:
-    total_yes = sum(answers.values())
-
-    # Примерная интерпретация (заглушка для логики)
-    # В реальности макс балл = 84.
     result = {
-        "tension": 0,      # Напряжение
-        "resistance": 0,   # Резистенция
-        "exhaustion": 0,   # Истощение
-        "total": total_yes
+        "tension": 0,
+        "resistance": 0,
+        "exhaustion": 0,
+        "total": sum(answers.values())
+    }
+    
+    # Суммируем баллы по каждой фазе
+    tension_questions = []
+    for symptom_list in BOYKO_KEYS["tension"].values():
+        tension_questions.extend(symptom_list)
+    
+    resistance_questions = []
+    for symptom_list in BOYKO_KEYS["resistance"].values():
+        resistance_questions.extend(symptom_list)
+    
+    exhaustion_questions = []
+    for symptom_list in BOYKO_KEYS["exhaustion"].values():
+        exhaustion_questions.extend(symptom_list)
+    
+    for q_id, val in answers.items():
+        q_id = int(q_id)
+        if val == 1:
+            if q_id in tension_questions:
+                result["tension"] += 1
+            elif q_id in resistance_questions:
+                result["resistance"] += 1
+            elif q_id in exhaustion_questions:
+                result["exhaustion"] += 1
+    
+    return result
+
+
+def calculate_phq9(answers: dict):
+    """
+    Расчет PHQ-9 (скрининг депрессии)
+    Шкала 0-3: 0=никогда, 1=несколько дней, 2=более половины дней, 3=почти каждый день
+    """
+    total = sum(answers.values())
+    
+    if total <= 4:
+        level = "минимальная или отсутствует"
+    elif total <= 9:
+        level = "легкая депрессия"
+    elif total <= 14:
+        level = "умеренная депрессия"
+    elif total <= 19:
+        level = "умеренно тяжелая депрессия"
+    else:
+        level = "тяжелая депрессия"
+    
+    return {
+        "total": total,
+        "level": level,
+        "scores": answers
     }
 
-    # Простая логика распределения (примерная!)
-    # Допустим, вопросы 1-28 это напряжение, 29-56 резистенция, 57-84 истощение
-    # Это нужно будет сверить с ключами из PDF, если нужна медицинская точность
-    for q_id, val in answers.items():
-        q_id_int = int(q_id)
-        if val == 1:
-            if q_id_int <= 28:
-                result["tension"] += 1
-            elif q_id_int <= 56:
-                result["resistance"] += 1
-            else:
-                result["exhaustion"] += 1
 
-    return result
+def calculate_gad7(answers: dict):
+    """
+    Расчет GAD-7 (скрининг тревоги)
+    Шкала 0-3: 0=никогда, 1=несколько дней, 2=более половины дней, 3=почти каждый день
+    """
+    total = sum(answers.values())
+    
+    if total <= 4:
+        level = "минимальная тревога"
+    elif total <= 9:
+        level = "легкая тревога"
+    elif total <= 14:
+        level = "умеренная тревога"
+    else:
+        level = "тяжелая тревога"
+    
+    return {
+        "total": total,
+        "level": level,
+        "scores": answers
+    }
+
+
+def calculate_pss10(answers: dict):
+    """
+    Расчет PSS-10 (шкала воспринимаемого стресса)
+    Вопросы 4,5,7,8 - обратная шкала (0-4)
+    """
+    reverse_items = [4, 5, 7, 8]
+    total = 0
+    
+    for q_id, value in answers.items():
+        q_id = int(q_id)
+        if q_id in reverse_items:
+            total += (4 - value)  # инвертируем
+        else:
+            total += value
+    
+    return {
+        "total": total,
+        "level": "низкий" if total <= 13 else "средний" if total <= 26 else "высокий",
+        "scores": answers
+    }
