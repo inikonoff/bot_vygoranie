@@ -1,7 +1,7 @@
 from aiogram import Router, types
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from src.database.supabase_client import db
+from src.database.supabase_client import db  # Этот импорт должен работать
 from src.keyboards import builders
 
 router = Router()
