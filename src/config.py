@@ -10,3 +10,4 @@ class Config:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 config = Config()
+settings = config  # Алиас для обратной совместимости
