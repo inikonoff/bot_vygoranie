@@ -2,15 +2,15 @@ from datetime import datetime, timedelta
 import logging
 from supabase import create_client, Client
 
-from src.config import settings
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
 
 class DBClient:
     def __init__(self):
-        self.client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        self._is_connected = True  # optimistic
+        self.client: Client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+        self._is_connected = True
 
     async def connect(self):
         """Проверка подключения к Supabase"""
@@ -26,7 +26,7 @@ class DBClient:
             return False
 
     async def close(self):
-        """Закрытие соединения (заглушка, т.к. Supabase client не требует явного закрытия)"""
+        """Закрытие соединения"""
         self._is_connected = False
         logger.info("✅ Supabase connection closed")
 
@@ -52,6 +52,7 @@ class DBClient:
         }
         try:
             self.client.table("users").upsert(data).execute()
+            logger.info(f"User {tg_id} added/updated")
         except Exception as e:
             logger.error(f"Error adding user {tg_id}: {e}")
 
@@ -171,3 +172,7 @@ class DBClient:
         """Получить пользователей, включивших напоминания"""
         # Заглушка - в будущем можно добавить поле reminders_enabled в таблицу users
         return []
+
+
+# СОЗДАЕМ ЭКЗЕМПЛЯР ДЛЯ ИМПОРТА - ЭТО ВАЖНО!
+db = DBClient()
