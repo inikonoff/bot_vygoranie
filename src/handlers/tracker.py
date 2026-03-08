@@ -5,6 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.database.supabase_client import db
 from src.keyboards import builders
 from src.states import TrackerStates
+from src.services.llm import generate_weekly_narrative, generate_cross_test_comment
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -75,7 +76,6 @@ async def save_emotion(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(TrackerStates.gratitude)
 async def save_gratitude(message: types.Message, state: FSMContext):
-    # Фильтр: не реагировать на кнопки меню
     menu_buttons = {"📊 Диагностика", "📝 Дневник", "🆘 SOS / Я киплю",
                     "🧠 Мои Эмоции", "🧘 Ресурсы", "📈 Моя динамика"}
     if message.text in menu_buttons:
@@ -130,10 +130,9 @@ async def _send_tracker_result(message, energy: int, emotion: str, gratitude):
 
 
 async def _check_energy_pattern(message, current_energy: int):
-    """Если 3+ дня подряд энергия ≤ 3 — мягко предложить помощь."""
+    """Если 3+ дня подряд энергия ≤ 3 — предложить помощь."""
     if current_energy > 3:
         return
-
     try:
         recent = await db.get_recent_energy(message.chat.id, days=3)
         if recent and len(recent) >= 3 and all(e <= 3 for e in recent):
@@ -146,7 +145,7 @@ async def _check_energy_pattern(message, current_energy: int):
         logger.warning(f"Energy pattern check failed: {e}")
 
 
-# ── ИСТОРИЯ ДНЕВНИКА ──────────────────────────────────────────────────────────
+# ── ДИНАМИКА ─────────────────────────────────────────────────────────────────
 
 @router.message(F.text == "📈 Моя динамика")
 async def show_dynamics(message: types.Message):
@@ -164,7 +163,7 @@ async def show_dynamics(message: types.Message):
         )
         return
 
-    # Считаем статистику
+    # Базовая статистика
     energies = [r["energy_level"] for r in logs if r.get("energy_level")]
     emotions = [r["emotion"] for r in logs if r.get("emotion")]
     avg_energy = round(sum(energies) / len(energies), 1) if energies else "—"
@@ -185,3 +184,33 @@ async def show_dynamics(message: types.Message):
         lines.append(line)
 
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=builders.main_menu())
+
+    # Недельный нарратив от LLM — отдельным сообщением
+    if len(logs) >= 3:
+        wait_msg = await message.answer("🔍 <i>Анализирую твою неделю...</i>", parse_mode="HTML")
+        try:
+            narrative = await generate_weekly_narrative(logs)
+            if narrative:
+                await wait_msg.edit_text(
+                    f"🧠 <b>Наблюдение недели:</b>\n\n{narrative}",
+                    parse_mode="HTML"
+                )
+            else:
+                await wait_msg.delete()
+        except Exception as e:
+            logger.warning(f"Weekly narrative error: {e}")
+            await wait_msg.delete()
+
+    # Кросс-тест паттерн
+    try:
+        pattern = await db.get_cross_test_pattern(message.from_user.id)
+        if pattern:
+            latest_tests = await db.get_latest_test_results(message.from_user.id)
+            comment = await generate_cross_test_comment(pattern, latest_tests)
+            if comment:
+                await message.answer(
+                    f"📊 <b>Общая картина по тестам:</b>\n\n{comment}",
+                    parse_mode="HTML"
+                )
+    except Exception as e:
+        logger.warning(f"Cross-test pattern error: {e}")

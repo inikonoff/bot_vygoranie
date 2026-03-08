@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
 from src.keyboards import builders
 from src.services.scoring import calculate_mbi, calculate_boyko, calculate_phq9, calculate_gad7, calculate_pss10
-from src.services.llm import analyze_mbi, analyze_boyko, analyze_phq9_gad7, analyze_pss10
+from src.services.llm import analyze_mbi, analyze_boyko, analyze_phq9_gad7, analyze_pss10, generate_cross_test_comment
 from src.database.supabase_client import db
 from src.states import TestStates
 
@@ -24,11 +24,41 @@ def _load_json(path: str) -> list:
         return []
 
 
-MBI_QUESTIONS = _load_json("data/mbi_test.json")
+MBI_QUESTIONS   = _load_json("data/mbi_test.json")
 BOYKO_QUESTIONS = _load_json("data/boyko_test.json")
-PHQ9_QUESTIONS = _load_json("data/phq9_test.json")
-GAD7_QUESTIONS = _load_json("data/gad7_test.json")
+PHQ9_QUESTIONS  = _load_json("data/phq9_test.json")
+GAD7_QUESTIONS  = _load_json("data/gad7_test.json")
 PSS10_QUESTIONS = _load_json("data/pss10_test.json")
+
+
+async def _maybe_show_cross_pattern(message_or_callback, user_id: int):
+    """
+    После сохранения любого теста проверяем общий паттерн.
+    Если есть тревожное пересечение — показываем сводный комментарий.
+    """
+    try:
+        pattern = await db.get_cross_test_pattern(user_id)
+        if not pattern:
+            return
+        latest_tests = await db.get_latest_test_results(user_id)
+        # Нужно минимум 2 разных теста чтобы был смысл в сводке
+        if len(latest_tests) < 2:
+            return
+        comment = await generate_cross_test_comment(pattern, latest_tests)
+        if not comment:
+            return
+
+        send = (
+            message_or_callback.message.answer
+            if hasattr(message_or_callback, "message")
+            else message_or_callback.answer
+        )
+        await send(
+            f"📊 <b>Общая картина:</b>\n\n{comment}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.warning(f"Cross-pattern check error: {e}")
 
 
 # ── ВХОД В ДИАГНОСТИКУ ───────────────────────────────────────────────────────
@@ -95,7 +125,6 @@ async def process_mbi(callback: types.CallbackQuery, state: FSMContext):
         result = calculate_mbi(answers)
         risk = await db.save_test_result(callback.from_user.id, "mbi", result)
 
-        # Краткий итог
         summary = (
             f"🏁 <b>MBI завершён</b>\n\n"
             f"🔥 Истощение: <b>{result['ee']}</b>/54 (норма &lt; 16)\n"
@@ -105,7 +134,6 @@ async def process_mbi(callback: types.CallbackQuery, state: FSMContext):
         )
         msg = await callback.message.edit_text(summary, parse_mode="HTML")
 
-        # LLM-анализ
         analysis = await analyze_mbi(result)
         if analysis:
             await msg.edit_text(
@@ -113,8 +141,7 @@ async def process_mbi(callback: types.CallbackQuery, state: FSMContext):
                 f"🔥 Истощение: <b>{result['ee']}</b>/54 · "
                 f"😐 Деперсонализация: <b>{result['dp']}</b>/30 · "
                 f"📉 Редукция: <b>{result['pa']}</b>/48\n\n"
-                f"──────────────────\n\n"
-                f"{analysis}",
+                f"──────────────────\n\n{analysis}",
                 parse_mode="HTML",
                 reply_markup=builders.offer_phq9_keyboard() if risk == "red" else builders.back_to_main()
             )
@@ -125,9 +152,7 @@ async def process_mbi(callback: types.CallbackQuery, state: FSMContext):
                 reply_markup=builders.offer_phq9_keyboard() if risk == "red" else builders.back_to_main()
             )
 
-        # Если красный — предложить PHQ-9
-        if risk == "red":
-            pass  # кнопка уже встроена в reply_markup выше
+        await _maybe_show_cross_pattern(callback, callback.from_user.id)
 
     await callback.answer()
 
@@ -189,16 +214,17 @@ async def process_boyko(callback: types.CallbackQuery, state: FSMContext):
             await msg.edit_text(
                 f"🏁 <b>Тест Бойко завершён</b>\n\n"
                 f"😬 {result['tension']} · 🛡 {result['resistance']} · 🔋 {result['exhaustion']}\n\n"
-                f"──────────────────\n\n"
-                f"{analysis}",
+                f"──────────────────\n\n{analysis}",
                 parse_mode="HTML",
                 reply_markup=builders.offer_sos_after_test_keyboard() if is_severe else builders.back_to_main()
             )
 
+        await _maybe_show_cross_pattern(callback, callback.from_user.id)
+
     await callback.answer()
 
 
-# ── PHQ-9 + GAD-7 (одна сессия) ──────────────────────────────────────────────
+# ── PHQ-9 + GAD-7 ────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "test_phq9_gad7")
 async def start_phq9(callback: types.CallbackQuery, state: FSMContext):
@@ -238,13 +264,11 @@ async def process_phq9(callback: types.CallbackQuery, state: FSMContext):
             parse_mode="HTML"
         )
     else:
-        # PHQ-9 завершён — переходим к GAD-7
         phq9_answers = answers
         await state.set_state(TestStates.gad7_q)
         await state.update_data(phq9_answers=phq9_answers, q_index=0, answers={})
 
         if not GAD7_QUESTIONS:
-            # GAD-7 недоступен — завершаем только с PHQ-9
             await _finish_phq9_only(callback, state, phq9_answers)
             return
 
@@ -294,18 +318,22 @@ async def process_gad7(callback: types.CallbackQuery, state: FSMContext):
         msg = await callback.message.edit_text(summary, parse_mode="HTML")
 
         analysis = await analyze_phq9_gad7(phq9_result, gad7_result)
-        is_elevated = phq9_result["level"] not in ("minimal",) or gad7_result["level"] not in ("minimal",)
+        is_elevated = (
+            phq9_result["level"] not in ("minimal",) or
+            gad7_result["level"] not in ("minimal",)
+        )
 
         if analysis:
             await msg.edit_text(
                 f"🏁 <b>Тесты завершены</b>\n\n"
                 f"💙 PHQ-9: <b>{phq9_result['total']}/27</b> — {phq9_result['label']}\n"
                 f"💛 GAD-7: <b>{gad7_result['total']}/21</b> — {gad7_result['label']}\n\n"
-                f"──────────────────\n\n"
-                f"{analysis}",
+                f"──────────────────\n\n{analysis}",
                 parse_mode="HTML",
                 reply_markup=builders.offer_sos_after_test_keyboard() if is_elevated else builders.back_to_main()
             )
+
+        await _maybe_show_cross_pattern(callback, callback.from_user.id)
 
     await callback.answer()
 
@@ -382,10 +410,12 @@ async def process_pss10(callback: types.CallbackQuery, state: FSMContext):
                 reply_markup=builders.back_to_main()
             )
 
+        await _maybe_show_cross_pattern(callback, callback.from_user.id)
+
     await callback.answer()
 
 
-# ── ИСТОРИЯ РЕЗУЛЬТАТОВ ───────────────────────────────────────────────────────
+# ── ИСТОРИЯ ───────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "test_history")
 async def show_test_history(callback: types.CallbackQuery):

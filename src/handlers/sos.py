@@ -6,6 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from src.keyboards import builders
 from src.services.llm import get_ai_response
+from src.database.supabase_client import db
 from src.states import AIState, AngerState, DefusionState
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ async def process_defusion(message: types.Message, state: FSMContext):
     )
 
 
-# ── БЕЗОПАСНОЕ МЕСТО (из ресурсов, доступно через SOS prolonged) ─────────────
+# ── БЕЗОПАСНОЕ МЕСТО ──────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "sos_safe_place")
 async def sos_safe_place(callback: types.CallbackQuery):
@@ -266,10 +267,10 @@ async def sos_safe_place(callback: types.CallbackQuery):
         await callback.message.edit_text(
             "🧘 <b>Практика: Безопасное место</b>\n\n"
             "Сделай несколько глубоких вдохов.\n\n"
-            "Представь место, где тебе абсолютно спокойно и безопасно — реальное или вымышленное.\n\n"
+            "Представь место, где тебе абсолютно спокойно и безопасно.\n\n"
             "Осмотрись: что ты видишь? Какие цвета вокруг?\n"
             "Что слышишь? Птицы, тишина, шум воды?\n\n"
-            "Побудь здесь несколько минут. Запомни это ощущение — ты можешь вернуться сюда в любой момент.",
+            "Побудь здесь несколько минут. Запомни это ощущение.",
             parse_mode="HTML",
             reply_markup=builders.back_to_main()
         )
@@ -280,27 +281,35 @@ async def sos_safe_place(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "sos_ai_chat")
 async def sos_ai_start(callback: types.CallbackQuery, state: FSMContext):
-    await state.update_data(history=[])
+    user_id = callback.from_user.id
+
+    # Подгружаем контекст пользователя из БД
+    user_context = await db.build_user_context(user_id)
+
+    await state.update_data(history=[], user_context=user_context)
+    await state.set_state(AIState.waiting_for_query)
+
     await callback.message.answer(
         "🤖 <b>AI-психолог на связи</b>\n\n"
         "Напиши, что тебя беспокоит. Я здесь, чтобы выслушать и поддержать.\n\n"
         "<i>Напиши «стоп» или нажми кнопку ниже, чтобы закончить.</i>",
         parse_mode="HTML"
     )
-    await state.set_state(AIState.waiting_for_query)
     await callback.answer()
 
 
 @router.callback_query(F.data == "ai_stop", AIState.waiting_for_query)
 async def sos_ai_stop(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.answer("Диалог завершён. Береги себя ❤️", reply_markup=builders.main_menu())
+    await callback.message.answer(
+        "Диалог завершён. Береги себя ❤️",
+        reply_markup=builders.main_menu()
+    )
     await callback.answer()
 
 
 @router.message(AIState.waiting_for_query)
 async def process_ai_query(message: types.Message, state: FSMContext):
-    # Выход через кнопку меню
     menu_buttons = {"📊 Диагностика", "📝 Дневник", "🆘 SOS / Я киплю",
                     "🧠 Мои Эмоции", "🧘 Ресурсы", "📈 Моя динамика"}
     if message.text in menu_buttons:
@@ -316,9 +325,14 @@ async def process_ai_query(message: types.Message, state: FSMContext):
     wait_msg = await message.answer("⏳ ...")
     data = await state.get_data()
     history = data.get("history", [])
+    user_context = data.get("user_context", "")
 
     try:
-        response = await get_ai_response(user_text=message.text, conversation_history=history)
+        response = await get_ai_response(
+            user_text=message.text,
+            user_context=user_context,
+            conversation_history=history
+        )
 
         history.append({"role": "user", "content": message.text})
         history.append({"role": "assistant", "content": response})
