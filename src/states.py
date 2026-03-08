@@ -1,6 +1,11 @@
 from aiogram.fsm.state import State, StatesGroup
 
 
+class OnboardingStates(StatesGroup):
+    sphere = State()
+    request = State()
+
+
 class TestStates(StatesGroup):
     mbi_q = State()
     boyko_q = State()
