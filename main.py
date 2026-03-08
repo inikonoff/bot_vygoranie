@@ -18,7 +18,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from config import config
+from src.config import config
 from src.handlers import start, testing, sos, tracker, emotions, resources, chat
 from src.database.supabase_client import db
 
