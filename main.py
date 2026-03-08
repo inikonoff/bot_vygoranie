@@ -21,7 +21,7 @@ from aiogram.types import BotCommand
 from src.config import config
 from src.handlers import start, testing, sos, tracker, emotions, resources, chat
 from src.database.supabase_client import db
-from src.middlewares.rate_limit import RateLimitMiddleware, BannedUsersMiddleware, LoggingMiddleware
+from src.rate_limit import RateLimitMiddleware, BannedUsersMiddleware, LoggingMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
