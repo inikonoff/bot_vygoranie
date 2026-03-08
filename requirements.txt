@@ -4,3 +4,6 @@ supabase>=2.9.0
 python-dotenv
 groq
 edge-tts
+fastapi
+uvicorn[standard]
+psutil
