@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-from config import config
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
