@@ -1,19 +1,32 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 def main_menu():
-    """Главное меню бота"""
     kb = [
         [KeyboardButton(text="📊 Диагностика"), KeyboardButton(text="📝 Дневник")],
-        [KeyboardButton(text="🧠 Мои Эмоции"), KeyboardButton(text="🆘 SOS / Я киплю")],
-        [KeyboardButton(text="🧘 Ресурсы"), KeyboardButton(text="📈 Моя динамика")]
+        [KeyboardButton(text="🧠 Мои Эмоции"), KeyboardButton(text="📈 Моя динамика")],
+        [KeyboardButton(text="🆘 SOS / Я киплю"), KeyboardButton(text="🧘 Ресурсы")],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 
-def scale_keyboard():
-    """Клавиатура для MBI (0-6)"""
+# ── ДИАГНОСТИКА ──────────────────────────────────────────────────────────────
+
+def diagnostics_menu():
+    """Подменю выбора теста."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📊 MBI — Выгорание (22 вопроса)", callback_data="test_mbi")
+    builder.button(text="📋 Бойко — Выгорание детально (84 вопроса)", callback_data="test_boyko")
+    builder.button(text="💙 PHQ-9 + GAD-7 — Депрессия и тревога (16 вопросов)", callback_data="test_phq9_gad7")
+    builder.button(text="🌡 PSS-10 — Уровень стресса (10 вопросов)", callback_data="test_pss10")
+    builder.button(text="📈 Мои последние результаты", callback_data="test_history")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def scale_keyboard_mbi():
+    """Шкала 0–6 для MBI."""
     builder = InlineKeyboardBuilder()
     for i in range(7):
         builder.button(text=str(i), callback_data=f"mbi_{i}")
@@ -21,92 +34,113 @@ def scale_keyboard():
     return builder.as_markup()
 
 
+def scale_keyboard_03():
+    """Шкала 0–3 для PHQ-9 и GAD-7."""
+    builder = InlineKeyboardBuilder()
+    labels = ["0 — Никогда", "1 — Несколько дней", "2 — Больше половины дней", "3 — Почти каждый день"]
+    for i, label in enumerate(labels):
+        builder.button(text=label, callback_data=f"scale03_{i}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def scale_keyboard_04():
+    """Шкала 0–4 для PSS-10."""
+    builder = InlineKeyboardBuilder()
+    labels = ["0 — Никогда", "1 — Почти никогда", "2 — Иногда", "3 — Довольно часто", "4 — Очень часто"]
+    for i, label in enumerate(labels):
+        builder.button(text=label, callback_data=f"scale04_{i}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def yes_no_keyboard():
-    """Клавиатура для теста Бойко (Да/Нет)"""
+    """Да/Нет для теста Бойко."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="Да", callback_data="boyko_yes")
-    builder.button(text="Нет", callback_data="boyko_no")
+    builder.button(text="✅ Да", callback_data="boyko_yes")
+    builder.button(text="❌ Нет", callback_data="boyko_no")
     builder.adjust(2)
     return builder.as_markup()
 
 
-def phq9_scale_keyboard():
-    """Клавиатура для PHQ-9 и GAD-7 (0-3)"""
+# ── SOS ──────────────────────────────────────────────────────────────────────
+
+def sos_situation_keyboard():
+    """Первый вопрос умного SOS: что сейчас происходит?"""
     builder = InlineKeyboardBuilder()
-    options = [
-        ("0 - Никогда", "phq9_0"),
-        ("1 - Несколько дней", "phq9_1"),
-        ("2 - Более половины дней", "phq9_2"),
-        ("3 - Почти каждый день", "phq9_3")
-    ]
-    for text, callback in options:
-        builder.button(text=text, callback_data=callback)
+    builder.button(text="⚡ Накрыло внезапно / паника", callback_data="sos_sudden")
+    builder.button(text="🔥 Конфликт или злость", callback_data="sos_anger")
+    builder.button(text="🌑 Уже долго плохо / апатия", callback_data="sos_prolonged")
+    builder.button(text="🤖 Поговорить с AI", callback_data="sos_ai_chat")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def pss10_scale_keyboard():
-    """Клавиатура для PSS-10 (0-4)"""
+def sos_sudden_keyboard():
+    """Варианты для острого состояния."""
     builder = InlineKeyboardBuilder()
-    options = [
-        ("0 - Никогда", "pss10_0"),
-        ("1 - Почти никогда", "pss10_1"),
-        ("2 - Иногда", "pss10_2"),
-        ("3 - Довольно часто", "pss10_3"),
-        ("4 - Очень часто", "pss10_4")
-    ]
-    for text, callback in options:
-        builder.button(text=text, callback_data=callback)
+    builder.button(text="🌬 Квадратное дыхание", callback_data="sos_breathe")
+    builder.button(text="🧭 Техника 5-4-3-2-1", callback_data="sos_grounding")
+    builder.button(text="⏸ Техника STOP (30 сек)", callback_data="sos_stop_technique")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def diagnostic_menu():
-    """Меню выбора диагностики"""
+def sos_prolonged_keyboard():
+    """Варианты при длительном плохом состоянии."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔥 MBI (выгорание)", callback_data="diag_mbi")
-    builder.button(text="😔 PHQ-9 (депрессия)", callback_data="diag_phq9")
-    builder.button(text="😰 GAD-7 (тревога)", callback_data="diag_gad7")
-    builder.button(text="📊 PSS-10 (стресс)", callback_data="diag_pss10")
-    builder.button(text="📋 Тест Бойко", callback_data="diag_boyko")
-    builder.button(text="📈 Мои результаты", callback_data="my_results")
-    builder.adjust(2)
-    return builder.as_markup()
-
-
-def smart_sos_keyboard():
-    """Умная клавиатура SOS с уточняющим вопросом"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🌪 Накрыло внезапно", callback_data="sos_sudden")
-    builder.button(text="⚡️ Конфликт или злость", callback_data="sos_anger")
-    builder.button(text="🌧 Уже долго плохо", callback_data="sos_prolonged")
-    builder.button(text="🤖 Нужен совет AI", callback_data="sos_ai_chat")
+    builder.button(text="🎧 Медитация: безопасное место", callback_data="sos_safe_place")
+    builder.button(text="💙 Пройти PHQ-9 + GAD-7", callback_data="test_phq9_gad7")
+    builder.button(text="🤖 Поговорить с AI", callback_data="sos_ai_chat")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def sos_keyboard():
-    """Оригинальная клавиатура SOS (для обратной совместимости)"""
+def sos_after_anger_keyboard():
+    """После выброса гнева."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="Тревога (Дыхание)", callback_data="sos_breathe")
-    builder.button(text="Гнев (Стоп-мысль)", callback_data="sos_anger")
-    builder.button(text="Апатия (Видео)", callback_data="sos_apathy")
-    builder.button(text="Нужен совет AI", callback_data="sos_ai_chat")
+    builder.button(text="🧠 Разобрать мысль (дефьюзинг)", callback_data="sos_defusion")
+    builder.button(text="🌬 Успокоиться (дыхание)", callback_data="sos_breathe")
+    builder.button(text="🏠 В главное меню", callback_data="sos_main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
 
-def skip_keyboard():
-    """Кнопка пропуска"""
+# ── ОБЩИЕ ────────────────────────────────────────────────────────────────────
+
+def back_to_main():
     builder = InlineKeyboardBuilder()
-    builder.button(text="⏭ Пропустить", callback_data="skip")
+    builder.button(text="🏠 Главное меню", callback_data="go_main")
     return builder.as_markup()
 
 
-def gratitude_keyboard():
-    """Клавиатура для шага благодарности в дневнике"""
+def ai_chat_stop_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="✨ Написать", callback_data="write_gratitude")
-    builder.button(text="⏭ Пропустить", callback_data="skip_gratitude")
-    builder.adjust(2)
+    builder.button(text="🛑 Закончить диалог", callback_data="ai_stop")
+    return builder.as_markup()
+
+
+def offer_phq9_keyboard():
+    """Предложение пройти PHQ-9 после высокого MBI."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💙 Да, пройти PHQ-9 + GAD-7", callback_data="test_phq9_gad7")
+    builder.button(text="Не сейчас", callback_data="go_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def offer_sos_after_test_keyboard():
+    """Предложение попробовать технику после тревожного результата."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🆘 Попробовать технику сейчас", callback_data="sos_sudden")
+    builder.button(text="🤖 Поговорить с AI", callback_data="sos_ai_chat")
+    builder.button(text="Позже", callback_data="go_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def tracker_skip_keyboard():
+    """Пропустить шаг благодарности в дневнике."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Пропустить", callback_data="tracker_skip_gratitude")
     return builder.as_markup()
