@@ -238,7 +238,7 @@ async def lifespan(app: FastAPI):
 
 # ── FASTAPI ───────────────────────────────────────────────────────────────────
 
-from src.middlewares.rate_limit import RATE_LIMIT_MESSAGES  # для лога
+from src.rate_limit import RATE_LIMIT_MESSAGES  # для лога
 
 app = FastAPI(
     lifespan=lifespan,
