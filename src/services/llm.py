@@ -11,7 +11,7 @@ if not config.GROQ_API_KEY:
 else:
     client = AsyncGroq(api_key=config.GROQ_API_KEY)
 
-MODEL_NAME = "llama3-70b-8192"
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 # ============================================================================
 # СИСТЕМНЫЙ ПРОМПТ — AI-ПСИХОЛОГ
