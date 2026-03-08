@@ -69,6 +69,14 @@ SYSTEM_PROMPT = """
 - При тревоге: 5-4-3-2-1. При подавленности: правило 5 минут.
 - При навязчивых мыслях: «заметь и отпусти». При злости: физический выход.
 
+## 🧠 ИСПОЛЬЗОВАНИЕ КОНТЕКСТА ПОЛЬЗОВАТЕЛЯ
+
+Если в системном промпте есть блок «КОНТЕКСТ ПОЛЬЗОВАТЕЛЯ»:
+- Используй его для персонализации — обращайся к реальной ситуации человека.
+- Не зачитывай данные вслух («я вижу, что твой MBI...»), а органично учитывай.
+- Если тесты показывают высокий риск — будь внимательнее, предлагай поддержку раньше.
+- Если человек из медицины/образования — учитывай профессиональный контекст выгорания.
+
 ## 🚨 ПРОТОКОЛ БЕЗОПАСНОСТИ
 
 Триггеры: «хочу умереть», «покончу с собой», «не вижу смысла жить», конкретные планы.
@@ -104,24 +112,24 @@ MBI_ANALYSIS_PROMPT = """
 Напиши развёрнутый персональный анализ на русском языке. Структура ответа:
 
 1. Общая картина (2-3 предложения): что говорят цифры в совокупности.
-2. Разбор по шкалам (по 2-3 предложения на каждую): что означает конкретный балл, 
+2. Разбор по шкалам (по 2-3 предложения на каждую): что означает конкретный балл,
    как это проявляется в повседневной жизни.
 3. На что обратить особое внимание (1-2 пункта): конкретные риски исходя из профиля.
 4. Три практических шага прямо сейчас: конкретные, реалистичные действия.
 
-Тон: тёплый, без медицинского жаргона, без пугающих формулировок. 
+Тон: тёплый, без медицинского жаргона, без пугающих формулировок.
 Пиши «ты», не «вы». Не ставь диагнозов.
 Объём: 250-350 слов.
 """
 
 BOYKO_ANALYSIS_PROMPT = """
 Ты — опытный психолог, специализирующийся на эмоциональном выгорании.
-Тебе предоставлены результаты опросника Бойко (методика диагностики уровня эмоционального выгорания).
+Тебе предоставлены результаты опросника Бойко.
 
 Напиши развёрнутый персональный анализ на русском языке. Структура:
 
 1. Общий профиль (2-3 предложения): в какой стадии находится человек.
-2. Разбор каждой фазы (Напряжение / Резистенция / Истощение): 
+2. Разбор каждой фазы (Напряжение / Резистенция / Истощение):
    что означает её статус, как она проявляется в жизни. По 2-3 предложения.
 3. Ключевые сигналы, которые важно не игнорировать.
 4. Три конкретных шага для восстановления.
@@ -132,7 +140,7 @@ BOYKO_ANALYSIS_PROMPT = """
 
 PHQ9_GAD7_ANALYSIS_PROMPT = """
 Ты — опытный психолог.
-Тебе предоставлены результаты двух скрининговых тестов: PHQ-9 (депрессия) и GAD-7 (тревога).
+Тебе предоставлены результаты PHQ-9 (депрессия) и GAD-7 (тревога).
 
 Напиши развёрнутый персональный анализ на русском языке. Структура:
 
@@ -160,6 +168,35 @@ PSS10_ANALYSIS_PROMPT = """
 Объём: 150-200 слов.
 """
 
+WEEKLY_NARRATIVE_PROMPT = """
+Ты — внимательный психолог, который наблюдает за человеком уже неделю.
+Тебе переданы его записи дневника за последние 7 дней.
+
+Напиши короткий персональный нарратив на русском языке — как будто подводишь итог недели вместе с ним.
+
+Структура (строго):
+1. Что было (1-2 предложения): общий тон недели, динамика энергии.
+2. Что бросается в глаза (1-2 предложения): паттерн эмоций, есть ли что-то повторяющееся.
+3. Один вопрос или мысль для размышления — не совет, а приглашение к осознанности.
+
+Правила:
+- Пиши «ты», тепло и без оценок.
+- Не пугай, не драматизируй, даже если неделя была тяжёлой.
+- Не давай инструкций — только наблюдение и мягкое приглашение.
+- Объём: 80-120 слов.
+"""
+
+CROSS_TEST_PROMPT = """
+Ты — опытный психолог.
+Человек прошёл несколько психологических тестов, и результаты складываются в общую картину.
+
+Напиши короткий сводный комментарий на русском языке (60-90 слов):
+- Что объединяет результаты — есть ли общий паттерн.
+- Почему важно обратить на это внимание именно сейчас.
+- Один конкретный следующий шаг.
+
+Тон: спокойный, поддерживающий, без паники и диагнозов. Пиши «ты».
+"""
 
 # ============================================================================
 # ОСНОВНЫЕ ФУНКЦИИ
@@ -167,20 +204,23 @@ PSS10_ANALYSIS_PROMPT = """
 
 async def get_ai_response(
     user_text: str,
-    context: str = "",
+    user_context: str = "",
     conversation_history: Optional[list] = None
 ) -> str:
     """Ответ AI-психолога на сообщение пользователя."""
     if not client:
         return "⚠️ Ошибка: ключ API не настроен."
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Системный промпт + контекст пользователя
+    system_content = SYSTEM_PROMPT
+    if user_context:
+        system_content = SYSTEM_PROMPT + "\n\n" + user_context
+
+    messages = [{"role": "system", "content": system_content}]
 
     if conversation_history:
         for msg in conversation_history[-10:]:
             messages.append(msg)
-    elif context:
-        messages.append({"role": "system", "content": f"Контекст: {context}"})
 
     messages.append({"role": "user", "content": user_text})
 
@@ -202,11 +242,58 @@ async def get_ai_response(
         return "Я здесь. Просто побудем в тишине."
 
 
-async def analyze_mbi(scores: dict) -> str:
-    """LLM-анализ результатов MBI."""
+async def generate_weekly_narrative(logs: list) -> str:
+    """
+    Генерирует недельный нарратив по записям дневника.
+    logs — список dict с ключами energy_level, emotion, gratitude, created_at.
+    """
+    if not client or not logs:
+        return ""
+
+    log_lines = []
+    for row in reversed(logs):  # от старых к новым
+        date = str(row.get("created_at", ""))[:10]
+        e = row.get("energy_level", "?")
+        emo = row.get("emotion", "?")
+        grat = row.get("gratitude", "")
+        line = f"{date}: энергия {e}/10, эмоция «{emo}»"
+        if grat:
+            line += f", хорошее: «{grat[:80]}»"
+        log_lines.append(line)
+
+    user_msg = "Записи дневника за неделю:\n" + "\n".join(log_lines)
+    return await _run_analysis(WEEKLY_NARRATIVE_PROMPT, user_msg, max_tokens=300)
+
+
+async def generate_cross_test_comment(pattern_description: str, latest_tests: dict) -> str:
+    """Сводный комментарий по нескольким тревожным тестам."""
     if not client:
         return ""
 
+    tests_str = []
+    label_map = {
+        "mbi": "MBI (выгорание)",
+        "boyko": "Бойко",
+        "phq9": "PHQ-9 (депрессия)",
+        "gad7": "GAD-7 (тревога)",
+        "pss10": "PSS-10 (стресс)",
+    }
+    for t, data in latest_tests.items():
+        label = label_map.get(t, t.upper())
+        details = data.get("details", {})
+        score = data.get("total_score", "?")
+        tests_str.append(f"• {label}: {score} баллов, детали: {details}")
+
+    user_msg = (
+        f"Паттерн: {pattern_description}\n\n"
+        f"Результаты тестов:\n" + "\n".join(tests_str)
+    )
+    return await _run_analysis(CROSS_TEST_PROMPT, user_msg, max_tokens=250)
+
+
+async def analyze_mbi(scores: dict) -> str:
+    if not client:
+        return ""
     user_msg = (
         f"Результаты MBI:\n"
         f"• Эмоциональное истощение (EE): {scores['ee']} из 54 "
@@ -217,15 +304,12 @@ async def analyze_mbi(scores: dict) -> str:
         f"(норма > 36, умеренное 24–36, высокое < 24)\n\n"
         f"Дай персональный анализ этих результатов."
     )
-
     return await _run_analysis(MBI_ANALYSIS_PROMPT, user_msg, max_tokens=600)
 
 
 async def analyze_boyko(result: dict) -> str:
-    """LLM-анализ результатов теста Бойко."""
     if not client:
         return ""
-
     user_msg = (
         f"Результаты опросника Бойко:\n"
         f"• Напряжение: {result['tension']} баллов — фаза {result['tension_status']}\n"
@@ -235,40 +319,32 @@ async def analyze_boyko(result: dict) -> str:
         f"Интерпретация фаз: < 36 — не сложилась, 37–60 — складывается, > 60 — сложилась.\n\n"
         f"Дай персональный анализ."
     )
-
     return await _run_analysis(BOYKO_ANALYSIS_PROMPT, user_msg, max_tokens=600)
 
 
 async def analyze_phq9_gad7(phq9_result: dict, gad7_result: dict) -> str:
-    """Совместный LLM-анализ PHQ-9 и GAD-7."""
     if not client:
         return ""
-
     user_msg = (
         f"Результаты тестов:\n"
         f"• PHQ-9 (депрессия): {phq9_result['total']} баллов из 27 — {phq9_result['label']}\n"
         f"• GAD-7 (тревога): {gad7_result['total']} баллов из 21 — {gad7_result['label']}\n\n"
         f"Дай персональный анализ."
     )
-
     return await _run_analysis(PHQ9_GAD7_ANALYSIS_PROMPT, user_msg, max_tokens=600)
 
 
 async def analyze_pss10(result: dict) -> str:
-    """LLM-анализ результатов PSS-10."""
     if not client:
         return ""
-
     user_msg = (
         f"Результат PSS-10 (воспринимаемый стресс): {result['total']} баллов из 40 — {result['label']}.\n"
         f"Дай персональный анализ."
     )
-
     return await _run_analysis(PSS10_ANALYSIS_PROMPT, user_msg, max_tokens=400)
 
 
 async def _run_analysis(system_prompt: str, user_msg: str, max_tokens: int = 600) -> str:
-    """Вспомогательная функция для запросов анализа."""
     try:
         completion = await client.chat.completions.create(
             model=MODEL_NAME,
@@ -287,7 +363,6 @@ async def _run_analysis(system_prompt: str, user_msg: str, max_tokens: int = 600
 
 
 def _clean_response(response: str) -> str:
-    """Минимальная очистка: убрать префиксы типа 'Ассистент:'."""
     for prefix in ("Ассистент:", "Assistant:", "AI:", "Психолог:"):
         if response.startswith(prefix):
             response = response.split(":", 1)[1].strip()
