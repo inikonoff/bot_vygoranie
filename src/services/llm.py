@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 from groq import AsyncGroq
-from config import config
+from src.config import config
 
 logger = logging.getLogger(__name__)
 
