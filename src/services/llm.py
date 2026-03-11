@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 from groq import AsyncGroq
-from src.config import config
+from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +339,63 @@ async def analyze_pss10(result: dict) -> str:
     )
 
     return await _run_analysis(PSS10_ANALYSIS_PROMPT, user_msg, max_tokens=400)
+
+
+async def generate_cross_test_comment(results: dict) -> str:
+    """
+    Сквозной комментарий по нескольким тестам сразу.
+    results — словарь с любым набором ключей: 'mbi', 'boyko', 'phq9', 'gad7', 'pss10'.
+    Каждый ключ содержит dict с результатами соответствующего теста.
+    Возвращает короткий связный абзац (100–150 слов), который объединяет картину.
+    """
+    if not client:
+        return ""
+
+    parts = []
+
+    if "mbi" in results:
+        s = results["mbi"]
+        parts.append(
+            f"MBI: истощение {s.get('ee','?')}/54, "
+            f"деперсонализация {s.get('dp','?')}/30, "
+            f"редукция {s.get('pa','?')}/48"
+        )
+    if "boyko" in results:
+        s = results["boyko"]
+        parts.append(
+            f"Бойко: напряжение {s.get('tension','?')} ({s.get('tension_status','?')}), "
+            f"резистенция {s.get('resistance','?')} ({s.get('resistance_status','?')}), "
+            f"истощение {s.get('exhaustion','?')} ({s.get('exhaustion_status','?')})"
+        )
+    if "phq9" in results:
+        s = results["phq9"]
+        parts.append(f"PHQ-9 (депрессия): {s.get('total','?')}/27 — {s.get('label','?')}")
+    if "gad7" in results:
+        s = results["gad7"]
+        parts.append(f"GAD-7 (тревога): {s.get('total','?')}/21 — {s.get('label','?')}")
+    if "pss10" in results:
+        s = results["pss10"]
+        parts.append(f"PSS-10 (стресс): {s.get('total','?')}/40 — {s.get('label','?')}")
+
+    if not parts:
+        return ""
+
+    user_msg = (
+        "Результаты нескольких тестов одного человека:\n"
+        + "\n".join(f"• {p}" for p in parts)
+        + "\n\nНапиши короткий (100–150 слов) связный комментарий, "
+        "который объединяет эту картину целиком. "
+        "Что эти результаты говорят вместе? На что обратить внимание в первую очередь? "
+        "Тон: тёплый, без паники, без диагнозов. Пиши «ты»."
+    )
+
+    system = (
+        "Ты — опытный психолог. Твоя задача — дать короткий синтетический комментарий "
+        "по совокупности результатов психологических тестов. "
+        "Не повторяй цифры — говори о смысле и связях между ними."
+    )
+
+    return await _run_analysis(system, user_msg, max_tokens=300)
 
 
 async def _run_analysis(system_prompt: str, user_msg: str, max_tokens: int = 600) -> str:
