@@ -6,7 +6,6 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from src.keyboards import builders
 from src.services.llm import get_ai_response
-from src.database.supabase_client import db
 from src.states import AIState, AngerState, DefusionState
 
 logger = logging.getLogger(__name__)
@@ -198,15 +197,95 @@ async def sos_anger_menu(callback: types.CallbackQuery, state: FSMContext):
 
 @router.message(AngerState.venting)
 async def process_anger(message: types.Message, state: FSMContext):
-    msg = await message.reply("🔥🔥🔥 Сжигаю этот негатив...")
-    await asyncio.sleep(1.5)
-    await msg.edit_text(
-        "🗑 Пепел развеян.\n\n"
-        "Сделай глубокий вдох. Как ты сейчас?\n\n"
-        "Хочешь разобрать мысль, которая за этим стоит?",
-        reply_markup=builders.sos_after_anger_keyboard()
-    )
     await state.clear()
+
+    text = message.text or ""
+
+    # ── Анимация сгорания ────────────────────────────────────────────────────
+    #
+    # Идея: текст пользователя постепенно «сгорает» — символы заменяются
+    # на огонь, потом на искры, потом на пепел, потом исчезают.
+    # Работает через последовательные edit_text с паузами.
+    #
+    # Telegram разрешает редактировать сообщение раз в ~0.3с (rate limit),
+    # поэтому делаем 5 крупных шагов, а не посимвольно.
+
+    import random
+
+    FIRE    = ["🔥", "🔥", "🔥", "💢", "😤"]
+    SPARKS  = ["✨", "💫", "⚡", "🌟", "💥"]
+    EMBERS  = ["·", "˙", "°", "∘", "•"]
+
+    def burn_text(text: str, stage: int) -> str:
+        """
+        stage 0 — оригинал + огонь по краям
+        stage 1 — ~60% символов заменены на 🔥/💢
+        stage 2 — ~80% заменены на искры ✨⚡
+        stage 3 — ~90% заменены на точки-угольки · ° •
+        stage 4 — пустая строка из пробелов (текст исчез)
+        """
+        chars = list(text)
+        n = len(chars)
+
+        if stage == 0:
+            return f"🔥 {text} 🔥"
+
+        elif stage == 1:
+            replace_count = int(n * 0.55)
+            indices = random.sample(range(n), min(replace_count, n))
+            for i in indices:
+                if chars[i] != " ":
+                    chars[i] = random.choice(FIRE)
+            return "🔥 " + "".join(chars) + " 💢"
+
+        elif stage == 2:
+            replace_count = int(n * 0.80)
+            indices = random.sample(range(n), min(replace_count, n))
+            for i in indices:
+                if chars[i] != " ":
+                    chars[i] = random.choice(SPARKS)
+            return "✨ " + "".join(chars) + " ✨"
+
+        elif stage == 3:
+            result = []
+            for ch in chars:
+                if ch == " ":
+                    result.append(" ")
+                else:
+                    result.append(random.choice(EMBERS) if random.random() > 0.15 else " ")
+            return "💨 " + "".join(result) + " 💨"
+
+        else:  # stage 4
+            return "·  ·  ·  ·  ·"
+
+    # Отправляем исходное сообщение — с огнём по краям
+    msg = await message.reply(burn_text(text, 0))
+    await asyncio.sleep(0.9)
+
+    # Прогон по стадиям
+    for stage in range(1, 5):
+        try:
+            await msg.edit_text(burn_text(text, stage))
+        except Exception:
+            pass  # если текст не изменился — Telegram вернёт ошибку, просто пропускаем
+        await asyncio.sleep(0.85)
+
+    # Финальный кадр — пепел и выдох
+    await asyncio.sleep(0.5)
+    try:
+        await msg.edit_text(
+            "🌬 <i>Развеяно.</i>\n\n"
+            "Сделай медленный выдох.\n\n"
+            "Как ты сейчас?",
+            parse_mode="HTML",
+            reply_markup=builders.sos_after_anger_keyboard()
+        )
+    except Exception:
+        await message.answer(
+            "🌬 <i>Развеяно.</i>\n\nКак ты сейчас?",
+            parse_mode="HTML",
+            reply_markup=builders.sos_after_anger_keyboard()
+        )
 
 
 @router.callback_query(F.data == "sos_main_menu")
@@ -247,7 +326,7 @@ async def process_defusion(message: types.Message, state: FSMContext):
     )
 
 
-# ── БЕЗОПАСНОЕ МЕСТО ──────────────────────────────────────────────────────────
+# ── БЕЗОПАСНОЕ МЕСТО (из ресурсов, доступно через SOS prolonged) ─────────────
 
 @router.callback_query(F.data == "sos_safe_place")
 async def sos_safe_place(callback: types.CallbackQuery):
@@ -267,10 +346,10 @@ async def sos_safe_place(callback: types.CallbackQuery):
         await callback.message.edit_text(
             "🧘 <b>Практика: Безопасное место</b>\n\n"
             "Сделай несколько глубоких вдохов.\n\n"
-            "Представь место, где тебе абсолютно спокойно и безопасно.\n\n"
+            "Представь место, где тебе абсолютно спокойно и безопасно — реальное или вымышленное.\n\n"
             "Осмотрись: что ты видишь? Какие цвета вокруг?\n"
             "Что слышишь? Птицы, тишина, шум воды?\n\n"
-            "Побудь здесь несколько минут. Запомни это ощущение.",
+            "Побудь здесь несколько минут. Запомни это ощущение — ты можешь вернуться сюда в любой момент.",
             parse_mode="HTML",
             reply_markup=builders.back_to_main()
         )
@@ -281,35 +360,27 @@ async def sos_safe_place(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "sos_ai_chat")
 async def sos_ai_start(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-
-    # Подгружаем контекст пользователя из БД
-    user_context = await db.build_user_context(user_id)
-
-    await state.update_data(history=[], user_context=user_context)
-    await state.set_state(AIState.waiting_for_query)
-
+    await state.update_data(history=[])
     await callback.message.answer(
         "🤖 <b>AI-психолог на связи</b>\n\n"
         "Напиши, что тебя беспокоит. Я здесь, чтобы выслушать и поддержать.\n\n"
         "<i>Напиши «стоп» или нажми кнопку ниже, чтобы закончить.</i>",
         parse_mode="HTML"
     )
+    await state.set_state(AIState.waiting_for_query)
     await callback.answer()
 
 
 @router.callback_query(F.data == "ai_stop", AIState.waiting_for_query)
 async def sos_ai_stop(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.answer(
-        "Диалог завершён. Береги себя ❤️",
-        reply_markup=builders.main_menu()
-    )
+    await callback.message.answer("Диалог завершён. Береги себя ❤️", reply_markup=builders.main_menu())
     await callback.answer()
 
 
 @router.message(AIState.waiting_for_query)
 async def process_ai_query(message: types.Message, state: FSMContext):
+    # Выход через кнопку меню
     menu_buttons = {"📊 Диагностика", "📝 Дневник", "🆘 SOS / Я киплю",
                     "🧠 Мои Эмоции", "🧘 Ресурсы", "📈 Моя динамика"}
     if message.text in menu_buttons:
@@ -325,14 +396,9 @@ async def process_ai_query(message: types.Message, state: FSMContext):
     wait_msg = await message.answer("⏳ ...")
     data = await state.get_data()
     history = data.get("history", [])
-    user_context = data.get("user_context", "")
 
     try:
-        response = await get_ai_response(
-            user_text=message.text,
-            user_context=user_context,
-            conversation_history=history
-        )
+        response = await get_ai_response(user_text=message.text, conversation_history=history)
 
         history.append({"role": "user", "content": message.text})
         history.append({"role": "assistant", "content": response})
