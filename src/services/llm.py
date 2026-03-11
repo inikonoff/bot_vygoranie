@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 from groq import AsyncGroq
-from src.config import config
+from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +396,42 @@ async def generate_cross_test_comment(results: dict) -> str:
     )
 
     return await _run_analysis(system, user_msg, max_tokens=300)
+
+
+async def generate_weekly_narrative(logs: list) -> str:
+    """
+    Генерирует короткий нарративный итог по записям дневника за неделю.
+    logs — список dict с ключами: energy_level, emotion, gratitude, created_at.
+    Возвращает 80–120 слов тёплого текста с наблюдениями за неделю.
+    """
+    if not client or not logs:
+        return ""
+
+    lines = []
+    for row in logs:
+        date = str(row.get("created_at", ""))[:10]
+        e = row.get("energy_level", "?")
+        emo = row.get("emotion", "?")
+        grat = row.get("gratitude", "")
+        line = f"• {date}: энергия {e}/10, эмоция — {emo}"
+        if grat:
+            line += f", хорошее: «{grat[:60]}»"
+        lines.append(line)
+
+    user_msg = (
+        "Записи дневника самочувствия за последние 7 дней:\n"
+        + "\n".join(lines)
+        + "\n\nНапиши короткий (80–120 слов) тёплый нарративный итог недели. "
+        "Что было характерно? Есть ли паттерны? Что радует, что настораживает? "
+        "Тон: мягкий, поддерживающий, без диагнозов. Пиши «ты»."
+    )
+
+    system = (
+        "Ты — внимательный психолог, который помогает человеку осмыслить свою неделю "
+        "через записи дневника. Пиши тепло, кратко, конкретно."
+    )
+
+    return await _run_analysis(system, user_msg, max_tokens=250)
 
 
 async def _run_analysis(system_prompt: str, user_msg: str, max_tokens: int = 600) -> str:
