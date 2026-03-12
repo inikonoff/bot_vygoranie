@@ -132,11 +132,10 @@ class DBClient:
                 self.client.table("users")
                 .select("is_onboarded")
                 .eq("telegram_id", tg_id)
-                .maybe_single()
                 .execute()
             )
-            if result.data:
-                return bool(result.data.get("is_onboarded", False))
+            if result.data and len(result.data) > 0:
+                return bool(result.data[0].get("is_onboarded", False))
             return False
         except Exception as e:
             logger.error(f"is_onboarded error: {e}")
@@ -149,6 +148,50 @@ class DBClient:
                 .eq("telegram_id", tg_id).execute()
         except Exception as e:
             logger.error(f"set_onboarded error: {e}")
+
+    async def save_onboarding(self, tg_id: int, sphere: str, main_request: str):
+        """Сохраняет данные онбординга и помечает пользователя как прошедшего онбординг."""
+        try:
+            # Обновляем данные пользователя
+            self.client.table("users").update({
+                "sphere": sphere,
+                "main_request": main_request,
+                "is_onboarded": True
+            }).eq("telegram_id", tg_id).execute()
+            
+            logger.info(f"User {tg_id} onboarding saved")
+        except Exception as e:
+            logger.error(f"save_onboarding error: {e}")
+
+    # ── КОНТЕКСТ ДЛЯ LLM ─────────────────────────────────────────────────────
+
+    async def build_user_context(self, tg_id: int) -> dict:
+        """Собирает контекст пользователя для LLM: данные пользователя и последние записи."""
+        try:
+            # Получаем данные пользователя
+            user_result = self.client.table("users") \
+                .select("first_name, sphere, main_request") \
+                .eq("telegram_id", tg_id) \
+                .execute()
+            
+            user_data = user_result.data[0] if user_result.data else {}
+            
+            # Получаем последние 3 записи из дневника
+            logs = await self.get_recent_logs(tg_id, days=7)
+            
+            # Получаем последние результаты тестов
+            tests = await self.get_test_history(tg_id, limit=3)
+            
+            context = {
+                "user": user_data,
+                "recent_logs": logs[:3] if logs else [],
+                "recent_tests": tests
+            }
+            
+            return context
+        except Exception as e:
+            logger.error(f"build_user_context error: {e}")
+            return {"user": {}, "recent_logs": [], "recent_tests": []}
 
 
 db = DBClient()
