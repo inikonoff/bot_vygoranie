@@ -20,7 +20,6 @@ class Config:
         val = os.environ.get("BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
         if not val:
             logger.error("BOT_TOKEN not found in environment variables")
-            logger.error(f"Available env vars: {list(os.environ.keys())}")
             raise RuntimeError("❌ BOT_TOKEN не задан в переменных окружения")
         return val
 
@@ -51,14 +50,10 @@ class Config:
         
         if not val:
             logger.warning("⚠️ GROQ_API_KEY не задан — LLM-функции недоступны")
-            logger.warning("Доступные переменные окружения: %s", list(os.environ.keys()))
             return ""
         
         # Очищаем ключ от возможных пробелов и кавычек
         val = val.strip().strip("'").strip('"')
-        logger.info(f"✅ GROQ_API_KEY найден, длина: {len(val)}")
-        logger.info(f"✅ Первые символы: {val[:8]}...")
-        
         return val
 
 
