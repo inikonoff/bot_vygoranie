@@ -58,6 +58,7 @@ async def setup_bot_commands():
     commands = [
         BotCommand(command="/start",  description="🔄 Главное меню"),
         BotCommand(command="/sos",    description="🆘 Срочная помощь"),
+        BotCommand(command="/chat",   description="🤖 Поговорить с психологом"),
         BotCommand(command="/diary",  description="📝 Заполнить дневник"),
         BotCommand(command="/mbi",    description="📊 Тест на выгорание"),
         BotCommand(command="/help",   description="📖 О боте"),
