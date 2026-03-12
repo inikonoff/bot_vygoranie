@@ -5,24 +5,9 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
-# Логируем информацию о ключе ДО проверки
-logger.info(f"GROQ_API_KEY loaded: {'Yes' if config.GROQ_API_KEY else 'No'}")
-if config.GROQ_API_KEY:
-    logger.info(f"GROQ_API_KEY length: {len(config.GROQ_API_KEY)}")
-    logger.info(f"GROQ_API_KEY first chars: {config.GROQ_API_KEY[:8]}...")
-else:
-    logger.warning("GROQ_API_KEY is empty or not set")
-
-if not config.GROQ_API_KEY:
-    logger.error("❌ GROQ_API_KEY не найден!")
-    client = None
-else:
-    client = AsyncGroq(api_key=config.GROQ_API_KEY)
-    logger.info("✅ Groq client initialized successfully")
-
+# Не инициализируем client здесь! Будем создавать при первом запросе
+_client_instance = None
 MODEL_NAME = "llama3-70b-8192"
-
-# ... остальной код
 
 # ============================================================================
 # СИСТЕМНЫЙ ПРОМПТ — AI-ПСИХОЛОГ
@@ -247,18 +232,75 @@ PSS10_ANALYSIS_PROMPT = """
 
 
 # ============================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================================
+
+async def get_client():
+    """Ленивое создание клиента Groq при первом запросе."""
+    global _client_instance
+    
+    if _client_instance is not None:
+        return _client_instance
+    
+    # Проверяем ключ ТОЛЬКО когда реально нужен клиент
+    groq_key = config.GROQ_API_KEY
+    
+    if not groq_key:
+        logger.error("❌ GROQ_API_KEY не найден при попытке создать клиент")
+        return None
+    
+    logger.info(f"🔑 Создаю Groq client (длина ключа: {len(groq_key)})")
+    try:
+        _client_instance = AsyncGroq(api_key=groq_key)
+        logger.info("✅ Groq client успешно создан")
+        return _client_instance
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания Groq client: {e}")
+        return None
+
+
+def _clean_response(response: str) -> str:
+    """Минимальная очистка: убрать префиксы типа 'Ассистент:'."""
+    for prefix in ("Ассистент:", "Assistant:", "AI:", "Психолог:"):
+        if response.startswith(prefix):
+            response = response.split(":", 1)[1].strip()
+    return response.strip()
+
+
+# ============================================================================
 # ОСНОВНЫЕ ФУНКЦИИ
 # ============================================================================
 
 async def get_ai_response(
     user_text: str,
     context: str = "",
+    user_context: Optional[dict] = None,
     conversation_history: Optional[list] = None
 ) -> str:
     """Ответ AI-психолога на сообщение пользователя."""
+    
+    # Лениво получаем клиент
+    client = await get_client()
+    
     if not client:
-        logger.error("Groq client is None - API key not configured")
-        return "⚠️ Ошибка: ключ API не настроен. Пожалуйста, обратитесь к администратору."
+        logger.warning("Groq client недоступен")
+        return "Я здесь. Просто побудем в тишине."
+
+    # Формируем контекст из user_context если нужно
+    if user_context and not context:
+        u = user_context.get("user", {})
+        logs = user_context.get("recent_logs", [])
+        parts = []
+        if u.get("first_name"):
+            parts.append(f"Имя: {u['first_name']}")
+        if u.get("sphere"):
+            parts.append(f"Сфера: {u['sphere']}")
+        if u.get("main_request"):
+            parts.append(f"Запрос: {u['main_request']}")
+        if logs:
+            last = logs[0]
+            parts.append(f"Последняя запись в дневнике — энергия {last.get('energy_level')}/10, эмоция: {last.get('emotion')}")
+        context = ". ".join(parts)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
@@ -266,12 +308,11 @@ async def get_ai_response(
         for msg in conversation_history[-10:]:
             messages.append(msg)
     elif context:
-        messages.append({"role": "system", "content": f"Контекст: {context}"})
+        messages.append({"role": "system", "content": f"Контекст пользователя: {context}"})
 
     messages.append({"role": "user", "content": user_text})
     
-    logger.info(f"Sending request to Groq with model {MODEL_NAME}")
-    logger.debug(f"Messages: {messages}")
+    logger.debug(f"Sending request to Groq, messages count: {len(messages)}")
 
     try:
         completion = await client.chat.completions.create(
@@ -284,26 +325,16 @@ async def get_ai_response(
             presence_penalty=0.1,
         )
         response = completion.choices[0].message.content
-        logger.info("Successfully received response from Groq")
         return _clean_response(response)
 
     except Exception as e:
         logger.error(f"Groq API Error: {type(e).__name__}: {e}", exc_info=True)
-        
-        # Проверяем специфические ошибки
-        error_str = str(e).lower()
-        if "invalid api key" in error_str or "authentication" in error_str:
-            return "🔑 Ошибка аутентификации API. Пожалуйста, проверьте API ключ."
-        elif "rate limit" in error_str:
-            return "⏳ Слишком много запросов. Попробуйте через минуту."
-        elif "insufficient" in error_str or "quota" in error_str:
-            return "⚠️ Исчерпан лимит запросов API. Попробуйте позже."
-        else:
-            return "Я здесь. Просто побудем в тишине."  # Безопасное падение
+        return "Я здесь. Просто побудем в тишине."
 
 
 async def analyze_mbi(scores: dict) -> str:
     """LLM-анализ результатов MBI."""
+    client = await get_client()
     if not client:
         return ""
 
@@ -318,11 +349,12 @@ async def analyze_mbi(scores: dict) -> str:
         f"Дай персональный анализ этих результатов."
     )
 
-    return await _run_analysis(MBI_ANALYSIS_PROMPT, user_msg, max_tokens=600)
+    return await _run_analysis(client, MBI_ANALYSIS_PROMPT, user_msg, max_tokens=600)
 
 
 async def analyze_boyko(result: dict) -> str:
     """LLM-анализ результатов теста Бойко."""
+    client = await get_client()
     if not client:
         return ""
 
@@ -336,11 +368,12 @@ async def analyze_boyko(result: dict) -> str:
         f"Дай персональный анализ."
     )
 
-    return await _run_analysis(BOYKO_ANALYSIS_PROMPT, user_msg, max_tokens=600)
+    return await _run_analysis(client, BOYKO_ANALYSIS_PROMPT, user_msg, max_tokens=600)
 
 
 async def analyze_phq9_gad7(phq9_result: dict, gad7_result: dict) -> str:
     """Совместный LLM-анализ PHQ-9 и GAD-7."""
+    client = await get_client()
     if not client:
         return ""
 
@@ -351,11 +384,12 @@ async def analyze_phq9_gad7(phq9_result: dict, gad7_result: dict) -> str:
         f"Дай персональный анализ."
     )
 
-    return await _run_analysis(PHQ9_GAD7_ANALYSIS_PROMPT, user_msg, max_tokens=600)
+    return await _run_analysis(client, PHQ9_GAD7_ANALYSIS_PROMPT, user_msg, max_tokens=600)
 
 
 async def analyze_pss10(result: dict) -> str:
     """LLM-анализ результатов PSS-10."""
+    client = await get_client()
     if not client:
         return ""
 
@@ -364,7 +398,7 @@ async def analyze_pss10(result: dict) -> str:
         f"Дай персональный анализ."
     )
 
-    return await _run_analysis(PSS10_ANALYSIS_PROMPT, user_msg, max_tokens=400)
+    return await _run_analysis(client, PSS10_ANALYSIS_PROMPT, user_msg, max_tokens=400)
 
 
 async def generate_cross_test_comment(results: dict) -> str:
@@ -374,6 +408,7 @@ async def generate_cross_test_comment(results: dict) -> str:
     Каждый ключ содержит dict с результатами соответствующего теста.
     Возвращает короткий связный абзац (100–150 слов), который объединяет картину.
     """
+    client = await get_client()
     if not client:
         return ""
 
@@ -421,7 +456,7 @@ async def generate_cross_test_comment(results: dict) -> str:
         "Не повторяй цифры — говори о смысле и связях между ними."
     )
 
-    return await _run_analysis(system, user_msg, max_tokens=300)
+    return await _run_analysis(client, system, user_msg, max_tokens=300)
 
 
 async def generate_weekly_narrative(logs: list) -> str:
@@ -430,6 +465,7 @@ async def generate_weekly_narrative(logs: list) -> str:
     logs — список dict с ключами: energy_level, emotion, gratitude, created_at.
     Возвращает 80–120 слов тёплого текста с наблюдениями за неделю.
     """
+    client = await get_client()
     if not client or not logs:
         return ""
 
@@ -457,10 +493,10 @@ async def generate_weekly_narrative(logs: list) -> str:
         "через записи дневника. Пиши тепло, кратко, конкретно."
     )
 
-    return await _run_analysis(system, user_msg, max_tokens=250)
+    return await _run_analysis(client, system, user_msg, max_tokens=250)
 
 
-async def _run_analysis(system_prompt: str, user_msg: str, max_tokens: int = 600) -> str:
+async def _run_analysis(client, system_prompt: str, user_msg: str, max_tokens: int = 600) -> str:
     """Вспомогательная функция для запросов анализа."""
     try:
         completion = await client.chat.completions.create(
@@ -477,11 +513,3 @@ async def _run_analysis(system_prompt: str, user_msg: str, max_tokens: int = 600
     except Exception as e:
         logger.error(f"Groq analysis error: {e}", exc_info=True)
         return ""
-
-
-def _clean_response(response: str) -> str:
-    """Минимальная очистка: убрать префиксы типа 'Ассистент:'."""
-    for prefix in ("Ассистент:", "Assistant:", "AI:", "Психолог:"):
-        if response.startswith(prefix):
-            response = response.split(":", 1)[1].strip()
-    return response.strip()
