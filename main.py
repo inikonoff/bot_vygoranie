@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+from src.handlers import admin  # в импорты
 
 import aiohttp
 import psutil
@@ -197,6 +198,7 @@ async def lifespan(app: FastAPI):
     dp.include_router(tracker.router)
     dp.include_router(emotions.router)
     dp.include_router(resources.router)
+    dp.include_router(admin.router)  # до chat.router
     dp.include_router(chat.router)
 
     await bot.delete_webhook(drop_pending_updates=True)
