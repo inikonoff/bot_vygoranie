@@ -2,8 +2,7 @@ import os
 import logging
 from dotenv import load_dotenv
 
-# load_dotenv работает локально (из .env файла).
-# На Render переменные уже в окружении — load_dotenv их не перезапишет.
+# Загружаем .env файл если он есть (для локальной разработки)
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -43,10 +42,23 @@ class Config:
 
     @property
     def GROQ_API_KEY(self) -> str:
-        val = os.environ.get("GROQ_API_KEY")
+        # Пробуем разные возможные имена переменных
+        val = (
+            os.environ.get("GROQ_API_KEY") or 
+            os.environ.get("GROQ_KEY") or 
+            os.environ.get("GROQ_API_TOKEN")
+        )
+        
         if not val:
             logger.warning("⚠️ GROQ_API_KEY не задан — LLM-функции недоступны")
+            logger.warning("Доступные переменные окружения: %s", list(os.environ.keys()))
             return ""
+        
+        # Очищаем ключ от возможных пробелов и кавычек
+        val = val.strip().strip("'").strip('"')
+        logger.info(f"✅ GROQ_API_KEY найден, длина: {len(val)}")
+        logger.info(f"✅ Первые символы: {val[:8]}...")
+        
         return val
 
 
