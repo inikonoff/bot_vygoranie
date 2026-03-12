@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 # Не инициализируем client здесь! Будем создавать при первом запросе
 _client_instance = None
-MODEL_NAME = "llama3-70b-8192"
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 # ============================================================================
 # СИСТЕМНЫЙ ПРОМПТ — AI-ПСИХОЛОГ
