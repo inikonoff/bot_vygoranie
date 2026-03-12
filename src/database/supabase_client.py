@@ -220,4 +220,92 @@ class DBClient:
             return {"user": {}, "recent_logs": [], "recent_tests": []}
 
 
+    # ── АДМИНКА ───────────────────────────────────────────────────────────────
+
+    async def get_admin_stats(self) -> dict:
+        """Статистика для админ-панели."""
+        try:
+            now = datetime.utcnow()
+            today = (now - timedelta(days=1)).isoformat()
+            week = (now - timedelta(days=7)).isoformat()
+
+            total = self.client.table("users").select("telegram_id", count="exact").execute()
+            new_today = self.client.table("users").select("telegram_id", count="exact").gte("created_at", today).execute()
+            new_week = self.client.table("users").select("telegram_id", count="exact").gte("created_at", week).execute()
+            active_week = self.client.table("daily_logs").select("user_id", count="exact").gte("created_at", week).execute()
+
+            risk_red = self.client.table("users").select("telegram_id", count="exact").eq("risk_group", "red").execute()
+            risk_yellow = self.client.table("users").select("telegram_id", count="exact").eq("risk_group", "yellow").execute()
+            risk_green = self.client.table("users").select("telegram_id", count="exact").eq("risk_group", "green").execute()
+
+            logs = self.client.table("daily_logs").select("energy_level").execute()
+            energies = [r["energy_level"] for r in (logs.data or []) if r.get("energy_level") is not None]
+            avg_energy = sum(energies) / len(energies) if energies else 0
+
+            def count_test(test_type):
+                r = self.client.table("assessments").select("id", count="exact").eq("test_type", test_type).execute()
+                return r.count or 0
+
+            return {
+                "total_users":  total.count or 0,
+                "new_today":    new_today.count or 0,
+                "new_week":     new_week.count or 0,
+                "active_week":  active_week.count or 0,
+                "risk_red":     risk_red.count or 0,
+                "risk_yellow":  risk_yellow.count or 0,
+                "risk_green":   risk_green.count or 0,
+                "tests_mbi":    count_test("mbi"),
+                "tests_boyko":  count_test("boyko"),
+                "tests_phq9":   count_test("phq9"),
+                "tests_gad7":   count_test("gad7"),
+                "tests_pss10":  count_test("pss10"),
+                "total_logs":   len(logs.data or []),
+                "avg_energy":   avg_energy,
+            }
+        except Exception as e:
+            logger.error(f"get_admin_stats error: {e}")
+            return {}
+
+    async def get_all_users(self, limit: int = 100) -> list:
+        """Список всех пользователей для админки."""
+        try:
+            result = (
+                self.client.table("users")
+                .select("telegram_id, first_name, username, risk_group, created_at")
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return result.data or []
+        except Exception as e:
+            logger.error(f"get_all_users error: {e}")
+            return []
+
+    async def get_all_user_ids(self) -> list:
+        """Список telegram_id всех пользователей для рассылки."""
+        try:
+            result = self.client.table("users").select("telegram_id").execute()
+            return [r["telegram_id"] for r in (result.data or [])]
+        except Exception as e:
+            logger.error(f"get_all_user_ids error: {e}")
+            return []
+
+    async def get_user_card(self, tg_id: int) -> dict:
+        """Полная карточка пользователя для админки."""
+        try:
+            user_result = (
+                self.client.table("users")
+                .select("telegram_id, first_name, username, risk_group, sphere, main_request, created_at")
+                .eq("telegram_id", tg_id)
+                .execute()
+            )
+            user = user_result.data[0] if user_result.data else {}
+            tests = await self.get_test_history(tg_id, limit=3)
+            logs = await self.get_recent_logs(tg_id, days=14)
+            return {"user": user, "recent_tests": tests, "recent_logs": logs[:5]}
+        except Exception as e:
+            logger.error(f"get_user_card error: {e}")
+            return {}
+
+
 db = DBClient()
