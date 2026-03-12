@@ -20,6 +20,8 @@ class Config:
     def BOT_TOKEN(self) -> str:
         val = os.environ.get("BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
         if not val:
+            logger.error("BOT_TOKEN not found in environment variables")
+            logger.error(f"Available env vars: {list(os.environ.keys())}")
             raise RuntimeError("❌ BOT_TOKEN не задан в переменных окружения")
         return val
 
@@ -27,6 +29,7 @@ class Config:
     def SUPABASE_URL(self) -> str:
         val = os.environ.get("SUPABASE_URL")
         if not val:
+            logger.error("SUPABASE_URL not found in environment variables")
             raise RuntimeError("❌ SUPABASE_URL не задан в переменных окружения")
         return val
 
@@ -34,6 +37,7 @@ class Config:
     def SUPABASE_KEY(self) -> str:
         val = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
         if not val:
+            logger.error("SUPABASE_KEY not found in environment variables")
             raise RuntimeError("❌ SUPABASE_KEY не задан в переменных окружения")
         return val
 
