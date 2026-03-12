@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-from src.config import config
+from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,33 @@ class DBClient:
         """Возвращает список значений энергии за последние N дней."""
         logs = await self.get_recent_logs(tg_id, days=days)
         return [r["energy_level"] for r in logs if r.get("energy_level") is not None]
+
+    # ── ОНБОРДИНГ ─────────────────────────────────────────────────────────────
+
+    async def is_onboarded(self, tg_id: int) -> bool:
+        """Проверяет, прошёл ли пользователь онбординг."""
+        try:
+            result = (
+                self.client.table("users")
+                .select("is_onboarded")
+                .eq("telegram_id", tg_id)
+                .maybe_single()
+                .execute()
+            )
+            if result.data:
+                return bool(result.data.get("is_onboarded", False))
+            return False
+        except Exception as e:
+            logger.error(f"is_onboarded error: {e}")
+            return False
+
+    async def set_onboarded(self, tg_id: int):
+        """Помечает пользователя как прошедшего онбординг."""
+        try:
+            self.client.table("users").update({"is_onboarded": True}) \
+                .eq("telegram_id", tg_id).execute()
+        except Exception as e:
+            logger.error(f"set_onboarded error: {e}")
 
 
 db = DBClient()
