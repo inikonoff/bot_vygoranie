@@ -5,13 +5,24 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
+# Логируем информацию о ключе ДО проверки
+logger.info(f"GROQ_API_KEY loaded: {'Yes' if config.GROQ_API_KEY else 'No'}")
+if config.GROQ_API_KEY:
+    logger.info(f"GROQ_API_KEY length: {len(config.GROQ_API_KEY)}")
+    logger.info(f"GROQ_API_KEY first chars: {config.GROQ_API_KEY[:8]}...")
+else:
+    logger.warning("GROQ_API_KEY is empty or not set")
+
 if not config.GROQ_API_KEY:
     logger.error("❌ GROQ_API_KEY не найден!")
     client = None
 else:
     client = AsyncGroq(api_key=config.GROQ_API_KEY)
+    logger.info("✅ Groq client initialized successfully")
 
 MODEL_NAME = "llama3-70b-8192"
+
+# ... остальной код
 
 # ============================================================================
 # СИСТЕМНЫЙ ПРОМПТ — AI-ПСИХОЛОГ
@@ -246,7 +257,8 @@ async def get_ai_response(
 ) -> str:
     """Ответ AI-психолога на сообщение пользователя."""
     if not client:
-        return "⚠️ Ошибка: ключ API не настроен."
+        logger.error("Groq client is None - API key not configured")
+        return "⚠️ Ошибка: ключ API не настроен. Пожалуйста, обратитесь к администратору."
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
@@ -257,6 +269,9 @@ async def get_ai_response(
         messages.append({"role": "system", "content": f"Контекст: {context}"})
 
     messages.append({"role": "user", "content": user_text})
+    
+    logger.info(f"Sending request to Groq with model {MODEL_NAME}")
+    logger.debug(f"Messages: {messages}")
 
     try:
         completion = await client.chat.completions.create(
@@ -269,11 +284,22 @@ async def get_ai_response(
             presence_penalty=0.1,
         )
         response = completion.choices[0].message.content
+        logger.info("Successfully received response from Groq")
         return _clean_response(response)
 
     except Exception as e:
-        logger.error(f"Groq API Error: {e}", exc_info=True)
-        return "Я здесь. Просто побудем в тишине."
+        logger.error(f"Groq API Error: {type(e).__name__}: {e}", exc_info=True)
+        
+        # Проверяем специфические ошибки
+        error_str = str(e).lower()
+        if "invalid api key" in error_str or "authentication" in error_str:
+            return "🔑 Ошибка аутентификации API. Пожалуйста, проверьте API ключ."
+        elif "rate limit" in error_str:
+            return "⏳ Слишком много запросов. Попробуйте через минуту."
+        elif "insufficient" in error_str or "quota" in error_str:
+            return "⚠️ Исчерпан лимит запросов API. Попробуйте позже."
+        else:
+            return "Я здесь. Просто побудем в тишине."  # Безопасное падение
 
 
 async def analyze_mbi(scores: dict) -> str:
