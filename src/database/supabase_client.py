@@ -15,8 +15,13 @@ class DBClient:
         """Создаём клиент лениво — только при первом обращении.
         К этому моменту Render уже точно передал переменные окружения."""
         if self._client is None:
-            self._client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
-            logger.info("✅ Supabase client initialized")
+            # Явно передаём API ключ в заголовках
+            self._client = create_client(
+                supabase_url=config.SUPABASE_URL,
+                supabase_key=config.SUPABASE_KEY
+            )
+            logger.info(f"✅ Supabase client initialized with URL: {config.SUPABASE_URL}")
+            logger.info(f"✅ Supabase key length: {len(config.SUPABASE_KEY)}")
         return self._client
 
     # ── ПОЛЬЗОВАТЕЛИ ─────────────────────────────────────────────────────────
@@ -28,9 +33,30 @@ class DBClient:
             "username": username,
         }
         try:
-            self.client.table("users").upsert(data).execute()
+            # Добавляем явную авторизацию в запрос
+            response = self.client.table("users").upsert(data).execute()
+            logger.debug(f"add_user response: {response}")
         except Exception as e:
             logger.error(f"add_user error: {e}")
+            # Пробуем альтернативный способ с явными заголовками
+            try:
+                import httpx
+                headers = {
+                    "apikey": config.SUPABASE_KEY,
+                    "Authorization": f"Bearer {config.SUPABASE_KEY}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates"
+                }
+                url = f"{config.SUPABASE_URL}/rest/v1/users"
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        url,
+                        headers=headers,
+                        json=data
+                    )
+                    logger.debug(f"Alternative add_user response: {response.status_code}")
+            except Exception as e2:
+                logger.error(f"Alternative add_user error: {e2}")
 
     # ── ТЕСТЫ ────────────────────────────────────────────────────────────────
 
