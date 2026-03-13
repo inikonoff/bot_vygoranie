@@ -1,6 +1,9 @@
 from aiogram import Router, F, types
+from aiogram.fsm.context import FSMContext
 from aiogram.types import URLInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.keyboards import builders
+from src.states import TrackerStates
 
 router = Router()
 
@@ -32,10 +35,19 @@ async def emotions_menu(message: types.Message):
 
 
 @router.callback_query(F.data == "go_diary")
-async def go_to_diary(callback: types.CallbackQuery):
+async def go_to_diary(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(TrackerStates.energy)
+
+    b = InlineKeyboardBuilder()
+    for i in range(1, 11):
+        b.button(text=str(i), callback_data=f"energy_{i}")
+    b.adjust(5)
+
     await callback.message.answer(
-        "Открываю дневник — выбери уровень энергии:",
-        reply_markup=builders.main_menu()
+        "⚡️ <b>Как твой уровень энергии прямо сейчас?</b>\n\n"
+        "1 — пустой, 10 — на подъёме",
+        reply_markup=b.as_markup(),
+        parse_mode="HTML"
     )
-    # Имитируем нажатие кнопки дневника — пользователь сам нажмёт 📝 Дневник
-    await callback.answer("Нажми «📝 Дневник» в меню ниже")
+    await callback.answer()
