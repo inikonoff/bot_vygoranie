@@ -12,8 +12,6 @@ class TestStates(StatesGroup):
     phq9_q = State()
     gad7_q = State()
     pss10_q = State()
-    uwes_q = State()
-    osipov_q = State()
 
 
 class TrackerStates(StatesGroup):
