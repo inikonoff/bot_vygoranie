@@ -15,12 +15,13 @@ from fastapi import FastAPI, Request, Response
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from src.config import config
 from src.handlers import start, testing, sos, tracker, emotions, resources, chat
 from src.database.supabase_client import db
+from src.fsm_storage import SupabaseStorage
+from src.scheduler import start_scheduler, stop_scheduler
 from src.rate_limit import rate_limit_mw, banned_users_mw, logging_mw, RATE_LIMIT_MESSAGES
 
 logging.basicConfig(
@@ -37,7 +38,7 @@ bot = Bot(
     token=config.BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher(storage=SupabaseStorage())
 
 start_time = time.time()
 polling_task = None
@@ -55,6 +56,7 @@ async def setup_bot_commands():
         BotCommand(command="/chat",   description="🤖 Поговорить с психологом"),
         BotCommand(command="/diary",  description="📝 Заполнить дневник"),
         BotCommand(command="/mbi",    description="📊 Тест на выгорание"),
+        BotCommand(command="/digest", description="🔔 Еженедельный дайджест"),
         BotCommand(command="/help",   description="📖 О боте"),
     ]
     await bot.set_my_commands(commands)
@@ -116,7 +118,7 @@ async def db_keep_alive():
     while True:
         try:
             await asyncio.sleep(43200)
-            db.client.table("users").select("telegram_id").limit(1).execute()
+            await db.ping()
             logger.debug("✅ Supabase keep-alive OK")
         except asyncio.CancelledError:
             break
@@ -184,6 +186,7 @@ async def lifespan(app: FastAPI):
     bot_info = await bot.get_me()
     logger.info(f"🤖 Bot: @{bot_info.username} (ID: {bot_info.id})")
 
+    start_scheduler(bot)
     polling_task = asyncio.create_task(run_polling_with_auto_restart())
     ping_task    = asyncio.create_task(keep_alive_ping())
     db_keepalive = asyncio.create_task(db_keep_alive())
@@ -200,6 +203,7 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down...")
     is_shutting_down = True
 
+    stop_scheduler()
     for task in (polling_task, ping_task, db_keepalive):
         if task and not task.done():
             task.cancel()

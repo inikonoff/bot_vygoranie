@@ -1,7 +1,8 @@
 import asyncio
+import html
 import logging
-from datetime import datetime, timedelta
 from collections import Counter
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,120 +11,84 @@ from src.database.supabase_client import db
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+# Часовой пояс рассылки (РФ/РБ — UTC+3)
+TIMEZONE = "Europe/Moscow"
+
+scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+
+
+def build_digest(logs: list, start: datetime, end: datetime) -> str:
+    """Текст дайджеста (HTML) по записям дневника за период."""
+    energies = [l["energy_level"] for l in logs if l.get("energy_level") is not None]
+    avg_energy = sum(energies) / len(energies) if energies else 0
+
+    emotions = [l["emotion"] for l in logs if l.get("emotion")]
+    emotion_stats = ""
+    if emotions:
+        emotion_stats = "🎭 <b>Топ эмоций:</b>\n"
+        for emo, count in Counter(emotions).most_common(3):
+            emotion_stats += f"  • {html.escape(emo)}: {count}\n"
+
+    gratitude_count = sum(1 for l in logs if l.get("gratitude"))
+
+    digest = (
+        f"📊 <b>Твой еженедельный дайджест</b>\n\n"
+        f"📅 {start.strftime('%d.%m')} — {end.strftime('%d.%m')}\n\n"
+        f"📈 <b>Средняя энергия:</b> {avg_energy:.1f}/10\n"
+        f"{emotion_stats}"
+        f"✨ <b>Хорошего отмечено:</b> {gratitude_count}\n\n"
+    )
+    if avg_energy < 4:
+        digest += ("⚠️ Энергия ниже среднего. Может, стоит отдохнуть?\n"
+                   "Загляни в раздел 🧘 Ресурсы.")
+    elif avg_energy > 7:
+        digest += "🌟 Отличная энергия! Так держать!"
+    else:
+        digest += "🌿 Держись, всё идёт своим чередом."
+    digest += "\n\n<i>Отключить дайджест: /digest</i>"
+    return digest
 
 
 async def send_weekly_digest(bot):
-    """Отправляет еженедельный дайджест всем активным пользователям"""
-    logger.info("📊 Generating weekly digest...")
-    
-    # Получаем всех пользователей, у которых есть записи за последнюю неделю
-    users = await db.get_active_users(days=7)
-    
+    """Отправляет еженедельный дайджест тем, кто включил его через /digest."""
+    users = await db.get_digest_users()
     if not users:
-        logger.info("No active users for digest")
+        logger.info("Digest: no subscribers")
         return
-    
-    sent_count = 0
+
+    end = datetime.utcnow()
+    start = end - timedelta(days=7)
+    sent = 0
     for user in users:
+        tg_id = user["telegram_id"]
         try:
-            tg_id = user['telegram_id']
-            
-            # Получаем статистику за неделю
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=7)
-            
-            logs = await db.get_daily_logs_range(tg_id, start_date, end_date)
-            
+            logs = await db.get_daily_logs_range(tg_id, start, end)
             if not logs:
-                # Если нет записей - мягкое напоминание
-                await bot.send_message(
-                    tg_id,
-                    "📝 **Напоминание**: Заполни дневник сегодня — это займёт 20 секунд.\n"
-                    "Это помогает отслеживать состояние и замечать тенденции."
-                )
-                sent_count += 1
-                continue
-            
-            # Считаем статистику
-            avg_energy = sum(log['energy_level'] for log in logs) / len(logs)
-            
-            emotions = [log['emotion'] for log in logs if log.get('emotion')]
-            emotion_stats = ""
-            if emotions:
-                top_emotions = Counter(emotions).most_common(3)
-                emotion_stats = "🎭 **Топ эмоций:**\n"
-                for emo, count in top_emotions:
-                    emotion_stats += f"  • {emo}: {count} раз\n"
-            
-            gratitude_count = sum(1 for log in logs if log.get('gratitude'))
-            
-            digest = (
-                f"📊 **Твой еженедельный дайджест**\n\n"
-                f"📅 {start_date.strftime('%d.%m')} - {end_date.strftime('%d.%m')}\n\n"
-                f"📈 **Средняя энергия:** {avg_energy:.1f}/10\n"
-                f"{emotion_stats}"
-                f"✨ **Благодарностей:** {gratitude_count}\n\n"
-            )
-            
-            if avg_energy < 4:
-                digest += "⚠️ Заметил, что энергия ниже среднего. Может, стоит отдохнуть?\n"
-                digest += "Попробуй раздел 🧘 Ресурсы для восстановления."
-            elif avg_energy > 7:
-                digest += "🌟 Отличная энергия! Так держать!"
+                text = ("📝 <b>Напоминание</b>: на этой неделе не было записей в дневнике. "
+                        "Это займёт 20 секунд и помогает замечать тенденции.\n\n"
+                        "<i>Отключить дайджест: /digest</i>")
             else:
-                digest += "🌿 Держись, всё идёт своим чередом."
-            
-            await bot.send_message(tg_id, digest)
-            sent_count += 1
-            
-            # Небольшая задержка между отправками
-            await asyncio.sleep(0.5)
-            
+                text = build_digest(logs, start, end)
+            await bot.send_message(tg_id, text, parse_mode="HTML")
+            sent += 1
         except Exception as e:
-            logger.error(f"Error sending digest to user {user.get('telegram_id')}: {e}")
-    
-    logger.info(f"✅ Weekly digest sent to {sent_count} users")
+            logger.error(f"Digest to {tg_id} failed: {e}")
+        await asyncio.sleep(0.1)  # лимиты Telegram
+    logger.info(f"✅ Weekly digest sent to {sent}/{len(users)}")
 
 
-async def send_daily_reminder(bot):
-    """Отправляет ежедневные напоминания (заглушка)"""
-    # В будущем здесь будет логика для пользователей с включенными напоминаниями
-    pass
-
-
-def setup_scheduler(bot):
-    """Настройка планировщика задач"""
-    # Еженедельный дайджест - каждый понедельник в 10:00
+def start_scheduler(bot):
     scheduler.add_job(
         send_weekly_digest,
-        CronTrigger(day_of_week='mon', hour=10, minute=0),
+        CronTrigger(day_of_week="mon", hour=10, minute=0, timezone=TIMEZONE),
         args=[bot],
         id="weekly_digest",
-        replace_existing=True
+        replace_existing=True,
     )
-    
-    # Ежедневные напоминания - каждый день в 21:00
-    scheduler.add_job(
-        send_daily_reminder,
-        CronTrigger(hour=21, minute=0),
-        args=[bot],
-        id="daily_reminder",
-        replace_existing=True
-    )
-    
     scheduler.start()
-    logger.info("✅ Scheduler started with jobs: weekly_digest, daily_reminder")
+    logger.info("✅ Scheduler started: weekly_digest (Mon 10:00 %s)", TIMEZONE)
 
 
-async def run_scheduler(bot):
-    """Запуск планировщика (для вызова из main)"""
-    setup_scheduler(bot)
-    
-    # Держим задачу живой
-    try:
-        while True:
-            await asyncio.sleep(60)
-    except asyncio.CancelledError:
-        logger.info("Scheduler task cancelled")
-        scheduler.shutdown()
+def stop_scheduler():
+    if scheduler.running:
+        scheduler.shutdown(wait=False)

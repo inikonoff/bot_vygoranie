@@ -164,6 +164,20 @@ async def start_chat_session(message: types.Message, state: FSMContext):
     )
 
 
+@router.message(Command("digest"))
+async def toggle_digest(message: types.Message):
+    enabled = await db.get_digest_enabled(message.from_user.id)
+    if await db.set_digest_enabled(message.from_user.id, not enabled):
+        if enabled:
+            text = "🔕 Еженедельный дайджест отключён."
+        else:
+            text = ("🔔 Еженедельный дайджест включён: по понедельникам в 10:00 (МСК) "
+                    "пришлю итоги твоего дневника за неделю. Отключить: /digest")
+    else:
+        text = "Не удалось изменить настройку. Попробуй позже."
+    await message.answer(text)
+
+
 @router.message(Command("help"))
 async def help_command(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from supabase import create_client, Client
@@ -15,48 +16,29 @@ class DBClient:
         """Создаём клиент лениво — только при первом обращении.
         К этому моменту Render уже точно передал переменные окружения."""
         if self._client is None:
-            # Явно передаём API ключ в заголовках
             self._client = create_client(
                 supabase_url=config.SUPABASE_URL,
-                supabase_key=config.SUPABASE_KEY
+                supabase_key=config.SUPABASE_KEY,
             )
-            logger.info(f"✅ Supabase client initialized with URL: {config.SUPABASE_URL}")
-            logger.info(f"✅ Supabase key length: {len(config.SUPABASE_KEY)}")
+            logger.info("✅ Supabase client initialized")
         return self._client
+
+    @staticmethod
+    async def _x(query):
+        """Выполняет синхронный запрос supabase-py в потоке, не блокируя event loop."""
+        return await asyncio.to_thread(query.execute)
+
+    async def ping(self):
+        await self._x(self.client.table("users").select("telegram_id").limit(1))
 
     # ── ПОЛЬЗОВАТЕЛИ ─────────────────────────────────────────────────────────
 
     async def add_user(self, tg_id: int, first_name: str, username: str):
-        data = {
-            "telegram_id": tg_id,
-            "first_name": first_name,
-            "username": username,
-        }
+        data = {"telegram_id": tg_id, "first_name": first_name, "username": username}
         try:
-            # Добавляем явную авторизацию в запрос
-            response = self.client.table("users").upsert(data).execute()
-            logger.debug(f"add_user response: {response}")
+            await self._x(self.client.table("users").upsert(data))
         except Exception as e:
             logger.error(f"add_user error: {e}")
-            # Пробуем альтернативный способ с явными заголовками
-            try:
-                import httpx
-                headers = {
-                    "apikey": config.SUPABASE_KEY,
-                    "Authorization": f"Bearer {config.SUPABASE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "resolution=merge-duplicates"
-                }
-                url = f"{config.SUPABASE_URL}/rest/v1/users"
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        url,
-                        headers=headers,
-                        json=data
-                    )
-                    logger.debug(f"Alternative add_user response: {response.status_code}")
-            except Exception as e2:
-                logger.error(f"Alternative add_user error: {e2}")
 
     # ── ТЕСТЫ ────────────────────────────────────────────────────────────────
 
@@ -67,11 +49,12 @@ class DBClient:
         """
         risk = self._calc_risk(test_type, scores)
 
-        # Обновляем risk_group пользователя только для MBI
         if test_type == "mbi" and risk:
             try:
-                self.client.table("users").update({"risk_group": risk}) \
-                    .eq("telegram_id", tg_id).execute()
+                await self._x(
+                    self.client.table("users").update({"risk_group": risk})
+                    .eq("telegram_id", tg_id)
+                )
             except Exception as e:
                 logger.error(f"update risk_group error: {e}")
 
@@ -83,7 +66,7 @@ class DBClient:
             "details": scores,
         }
         try:
-            self.client.table("assessments").insert(data).execute()
+            await self._x(self.client.table("assessments").insert(data))
         except Exception as e:
             logger.error(f"save_test_result error: {e}")
 
@@ -100,13 +83,12 @@ class DBClient:
 
     async def get_test_history(self, tg_id: int, limit: int = 10) -> list:
         try:
-            result = (
+            result = await self._x(
                 self.client.table("assessments")
                 .select("test_type, total_score, created_at")
                 .eq("user_id", tg_id)
                 .order("created_at", desc=True)
                 .limit(limit)
-                .execute()
             )
             return result.data or []
         except Exception as e:
@@ -116,32 +98,42 @@ class DBClient:
     # ── ДНЕВНИК ───────────────────────────────────────────────────────────────
 
     async def save_daily_log(self, tg_id: int, energy: int, emotion: str, gratitude: str = None):
-        data = {
-            "user_id": tg_id,
-            "energy_level": energy,
-            "emotion": emotion,
-        }
+        data = {"user_id": tg_id, "energy_level": energy, "emotion": emotion}
         if gratitude is not None:
             data["gratitude"] = gratitude
         try:
-            self.client.table("daily_logs").insert(data).execute()
+            await self._x(self.client.table("daily_logs").insert(data))
         except Exception as e:
             logger.error(f"save_daily_log error: {e}")
 
     async def get_recent_logs(self, tg_id: int, days: int = 7) -> list:
         since = (datetime.utcnow() - timedelta(days=days)).isoformat()
         try:
-            result = (
+            result = await self._x(
                 self.client.table("daily_logs")
                 .select("energy_level, emotion, gratitude, created_at")
                 .eq("user_id", tg_id)
                 .gte("created_at", since)
                 .order("created_at", desc=True)
-                .execute()
             )
             return result.data or []
         except Exception as e:
             logger.error(f"get_recent_logs error: {e}")
+            return []
+
+    async def get_daily_logs_range(self, tg_id: int, start: datetime, end: datetime) -> list:
+        try:
+            result = await self._x(
+                self.client.table("daily_logs")
+                .select("energy_level, emotion, gratitude, created_at")
+                .eq("user_id", tg_id)
+                .gte("created_at", start.isoformat())
+                .lte("created_at", end.isoformat())
+                .order("created_at", desc=True)
+            )
+            return result.data or []
+        except Exception as e:
+            logger.error(f"get_daily_logs_range error: {e}")
             return []
 
     async def get_recent_energy(self, tg_id: int, days: int = 3) -> list:
@@ -152,15 +144,11 @@ class DBClient:
     # ── ОНБОРДИНГ ─────────────────────────────────────────────────────────────
 
     async def is_onboarded(self, tg_id: int) -> bool:
-        """Проверяет, прошёл ли пользователь онбординг."""
         try:
-            result = (
-                self.client.table("users")
-                .select("is_onboarded")
-                .eq("telegram_id", tg_id)
-                .execute()
+            result = await self._x(
+                self.client.table("users").select("is_onboarded").eq("telegram_id", tg_id)
             )
-            if result.data and len(result.data) > 0:
+            if result.data:
                 return bool(result.data[0].get("is_onboarded", False))
             return False
         except Exception as e:
@@ -168,57 +156,116 @@ class DBClient:
             return False
 
     async def set_onboarded(self, tg_id: int):
-        """Помечает пользователя как прошедшего онбординг."""
         try:
-            self.client.table("users").update({"is_onboarded": True}) \
-                .eq("telegram_id", tg_id).execute()
+            await self._x(
+                self.client.table("users").update({"is_onboarded": True}).eq("telegram_id", tg_id)
+            )
         except Exception as e:
             logger.error(f"set_onboarded error: {e}")
 
     async def save_onboarding(self, tg_id: int, sphere: str, main_request: str):
-        """Сохраняет данные онбординга и помечает пользователя как прошедшего онбординг."""
         try:
-            # Обновляем данные пользователя
-            self.client.table("users").update({
-                "sphere": sphere,
-                "main_request": main_request,
-                "is_onboarded": True
-            }).eq("telegram_id", tg_id).execute()
-            
+            await self._x(
+                self.client.table("users").update({
+                    "sphere": sphere,
+                    "main_request": main_request,
+                    "is_onboarded": True,
+                }).eq("telegram_id", tg_id)
+            )
             logger.info(f"User {tg_id} onboarding saved")
         except Exception as e:
             logger.error(f"save_onboarding error: {e}")
+
+    # ── ДАЙДЖЕСТ ──────────────────────────────────────────────────────────────
+
+    async def get_digest_enabled(self, tg_id: int) -> bool:
+        try:
+            result = await self._x(
+                self.client.table("users").select("digest_enabled").eq("telegram_id", tg_id)
+            )
+            return bool(result.data and result.data[0].get("digest_enabled"))
+        except Exception as e:
+            logger.error(f"get_digest_enabled error: {e}")
+            return False
+
+    async def set_digest_enabled(self, tg_id: int, enabled: bool) -> bool:
+        try:
+            await self._x(
+                self.client.table("users").update({"digest_enabled": enabled}).eq("telegram_id", tg_id)
+            )
+            return True
+        except Exception as e:
+            logger.error(f"set_digest_enabled error: {e}")
+            return False
+
+    async def get_digest_users(self) -> list:
+        """Пользователи, давшие согласие на еженедельный дайджест."""
+        try:
+            result = await self._x(
+                self.client.table("users").select("telegram_id").eq("digest_enabled", True)
+            )
+            return result.data or []
+        except Exception as e:
+            logger.error(f"get_digest_users error: {e}")
+            return []
+
+    # ── БАЗА ЗНАНИЙ (RAG) ─────────────────────────────────────────────────────
+
+    async def search_knowledge(self, query: str, limit: int = 3) -> list[str]:
+        """Полнотекстовый поиск по knowledge_base (RPC search_knowledge). При ошибке — []."""
+        if not query or not query.strip():
+            return []
+        try:
+            result = await self._x(
+                self.client.rpc("search_knowledge", {"query_text": query, "match_count": limit})
+            )
+            return [r["content"] for r in (result.data or []) if r.get("content")]
+        except Exception as e:
+            logger.warning(f"search_knowledge error: {e}")
+            return []
+
+    # ── FSM-ХРАНИЛИЩЕ ─────────────────────────────────────────────────────────
+
+    async def fsm_get(self, key: str) -> dict | None:
+        result = await self._x(
+            self.client.table("fsm_states").select("state, data").eq("key", key)
+        )
+        return result.data[0] if result.data else None
+
+    async def fsm_set(self, key: str, state: str | None, data: dict):
+        await self._x(
+            self.client.table("fsm_states").upsert({
+                "key": key,
+                "state": state,
+                "data": data,
+                "updated_at": datetime.utcnow().isoformat(),
+            })
+        )
+
+    async def fsm_delete(self, key: str):
+        await self._x(self.client.table("fsm_states").delete().eq("key", key))
 
     # ── КОНТЕКСТ ДЛЯ LLM ─────────────────────────────────────────────────────
 
     async def build_user_context(self, tg_id: int) -> dict:
         """Собирает контекст пользователя для LLM: данные пользователя и последние записи."""
         try:
-            # Получаем данные пользователя
-            user_result = self.client.table("users") \
-                .select("first_name, sphere, main_request") \
-                .eq("telegram_id", tg_id) \
-                .execute()
-            
+            user_result = await self._x(
+                self.client.table("users")
+                .select("first_name, sphere, main_request")
+                .eq("telegram_id", tg_id)
+            )
             user_data = user_result.data[0] if user_result.data else {}
-            
-            # Получаем последние 3 записи из дневника
             logs = await self.get_recent_logs(tg_id, days=7)
-            
-            # Получаем последние результаты тестов
             tests = await self.get_test_history(tg_id, limit=3)
-            
-            context = {
+            return {
                 "user": user_data,
                 "recent_logs": logs[:3] if logs else [],
-                "recent_tests": tests
+                "recent_tests": tests,
             }
-            
-            return context
         except Exception as e:
             logger.error(f"build_user_context error: {e}")
             return {"user": {}, "recent_logs": [], "recent_tests": []}
-
 
     # ── АДМИНКА ───────────────────────────────────────────────────────────────
 
@@ -228,53 +275,56 @@ class DBClient:
             now = datetime.utcnow()
             today = (now - timedelta(days=1)).isoformat()
             week = (now - timedelta(days=7)).isoformat()
+            t = self.client.table
 
-            total = self.client.table("users").select("telegram_id", count="exact").execute()
-            new_today = self.client.table("users").select("telegram_id", count="exact").gte("created_at", today).execute()
-            new_week = self.client.table("users").select("telegram_id", count="exact").gte("created_at", week).execute()
-            active_week = self.client.table("daily_logs").select("user_id", count="exact").gte("created_at", week).execute()
+            async def count(q):
+                return (await self._x(q)).count or 0
 
-            risk_red = self.client.table("users").select("telegram_id", count="exact").eq("risk_group", "red").execute()
-            risk_yellow = self.client.table("users").select("telegram_id", count="exact").eq("risk_group", "yellow").execute()
-            risk_green = self.client.table("users").select("telegram_id", count="exact").eq("risk_group", "green").execute()
-
-            logs = self.client.table("daily_logs").select("energy_level").execute()
-            energies = [r["energy_level"] for r in (logs.data or []) if r.get("energy_level") is not None]
-            avg_energy = sum(energies) / len(energies) if energies else 0
-
-            def count_test(test_type):
-                r = self.client.table("assessments").select("id", count="exact").eq("test_type", test_type).execute()
-                return r.count or 0
+            test_types = ["mbi", "boyko", "phq9", "gad7", "pss10"]
+            results = await asyncio.gather(
+                count(t("users").select("telegram_id", count="exact")),
+                count(t("users").select("telegram_id", count="exact").gte("created_at", today)),
+                count(t("users").select("telegram_id", count="exact").gte("created_at", week)),
+                count(t("daily_logs").select("user_id", count="exact").gte("created_at", week)),
+                count(t("users").select("telegram_id", count="exact").eq("risk_group", "red")),
+                count(t("users").select("telegram_id", count="exact").eq("risk_group", "yellow")),
+                count(t("users").select("telegram_id", count="exact").eq("risk_group", "green")),
+                *[count(t("assessments").select("id", count="exact").eq("test_type", tt)) for tt in test_types],
+                count(t("daily_logs").select("id", count="exact")),
+            )
+            energies = (await self._x(
+                t("daily_logs").select("energy_level").gte("created_at", week)
+            )).data or []
+            values = [r["energy_level"] for r in energies if r.get("energy_level") is not None]
+            avg_energy = sum(values) / len(values) if values else 0
 
             return {
-                "total_users":  total.count or 0,
-                "new_today":    new_today.count or 0,
-                "new_week":     new_week.count or 0,
-                "active_week":  active_week.count or 0,
-                "risk_red":     risk_red.count or 0,
-                "risk_yellow":  risk_yellow.count or 0,
-                "risk_green":   risk_green.count or 0,
-                "tests_mbi":    count_test("mbi"),
-                "tests_boyko":  count_test("boyko"),
-                "tests_phq9":   count_test("phq9"),
-                "tests_gad7":   count_test("gad7"),
-                "tests_pss10":  count_test("pss10"),
-                "total_logs":   len(logs.data or []),
-                "avg_energy":   avg_energy,
+                "total_users": results[0],
+                "new_today": results[1],
+                "new_week": results[2],
+                "active_week": results[3],
+                "risk_red": results[4],
+                "risk_yellow": results[5],
+                "risk_green": results[6],
+                "tests_mbi": results[7],
+                "tests_boyko": results[8],
+                "tests_phq9": results[9],
+                "tests_gad7": results[10],
+                "tests_pss10": results[11],
+                "total_logs": results[12],
+                "avg_energy": avg_energy,
             }
         except Exception as e:
             logger.error(f"get_admin_stats error: {e}")
             return {}
 
     async def get_all_users(self, limit: int = 100) -> list:
-        """Список всех пользователей для админки."""
         try:
-            result = (
+            result = await self._x(
                 self.client.table("users")
                 .select("telegram_id, first_name, username, risk_group, created_at")
                 .order("created_at", desc=True)
                 .limit(limit)
-                .execute()
             )
             return result.data or []
         except Exception as e:
@@ -282,22 +332,19 @@ class DBClient:
             return []
 
     async def get_all_user_ids(self) -> list:
-        """Список telegram_id всех пользователей для рассылки."""
         try:
-            result = self.client.table("users").select("telegram_id").execute()
+            result = await self._x(self.client.table("users").select("telegram_id"))
             return [r["telegram_id"] for r in (result.data or [])]
         except Exception as e:
             logger.error(f"get_all_user_ids error: {e}")
             return []
 
     async def get_user_card(self, tg_id: int) -> dict:
-        """Полная карточка пользователя для админки."""
         try:
-            user_result = (
+            user_result = await self._x(
                 self.client.table("users")
                 .select("telegram_id, first_name, username, risk_group, sphere, main_request, created_at")
                 .eq("telegram_id", tg_id)
-                .execute()
             )
             user = user_result.data[0] if user_result.data else {}
             tests = await self.get_test_history(tg_id, limit=3)

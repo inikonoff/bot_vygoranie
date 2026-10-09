@@ -153,7 +153,7 @@ async def show_stats(callback: CallbackQuery):
         f"• PSS-10: {stats.get('tests_pss10', 0)}\n\n"
         f"📓 <b>Дневник:</b>\n"
         f"• Всего записей: {stats.get('total_logs', 0)}\n"
-        f"• Средняя энергия: {stats.get('avg_energy', 0):.1f}/10\n"
+        f"• Средняя энергия (7 дней): {stats.get('avg_energy', 0):.1f}/10\n"
     )
     await callback.message.edit_text(text, reply_markup=get_back_keyboard(), parse_mode="HTML")
     await callback.answer()

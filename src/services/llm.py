@@ -244,6 +244,7 @@ async def get_ai_response(
     user_context: Optional[dict] = None,
     conversation_history: Optional[list] = None,
     session_mode: str = "",
+    knowledge: Optional[list] = None,
 ) -> str:
     """
     Ответ психолога на сообщение пользователя.
@@ -289,6 +290,14 @@ async def get_ai_response(
     if context or mode_note:
         dynamic_context = "\n".join(filter(None,[context, mode_note]))
         final_system_content += f"\n\n## ДАННЫЕ О ПОЛЬЗОВАТЕЛЕ И РЕЖИМ\n{dynamic_context}"
+
+    if knowledge:
+        refs = "\n\n".join(f"- {k.strip()}" for k in knowledge)
+        final_system_content += (
+            "\n\n## СПРАВОЧНЫЕ МАТЕРИАЛЫ\n"
+            "Используй, только если они уместны для вопроса; не цитируй дословно и не упоминай, "
+            "что они тебе даны:\n" + refs
+        )
 
     # 2. Инициализируем массив сообщений ОДНИМ системным словарем
     messages =[{"role": "system", "content": final_system_content}]
@@ -360,8 +369,10 @@ async def analyze_boyko(result: dict) -> str:
         f"• Резистенция: {result['resistance']} баллов — фаза {result['resistance_status']}\n"
         f"• Истощение: {result['exhaustion']} баллов — фаза {result['exhaustion_status']}\n"
         f"• Общий балл: {result['total']}\n\n"
-        f"Интерпретация фаз: < 36 — не сложилась, 37–60 — складывается, > 60 — сложилась.\n\n"
-        f"Дай персональный анализ."
+        f"Интерпретация фаз: ≤ 36 — не сложилась, 37–60 — складывается, > 60 — сложилась.\n"
+        + ("ВАЖНО: подсчёт упрощённый (без весов методики), баллы приблизительные — "
+           "скажи об этом пользователю в одной фразе.\n" if result.get("simplified") else "")
+        + "\nДай персональный анализ."
     )
     return await _run_analysis(client, BOYKO_ANALYSIS_PROMPT, user_msg, max_tokens=600)
 

@@ -51,11 +51,13 @@ async def chat_logic(message: types.Message, state: FSMContext):
 
     try:
         user_context = await db.build_user_context(message.from_user.id)
+        knowledge = await db.search_knowledge(message.text)
         response_text = await get_ai_response(
             user_text=message.text,
             user_context=user_context,
             session_mode=session_mode,
             conversation_history=history,
+            knowledge=knowledge,
         )
         history = (history + [
             {"role": "user", "content": message.text},

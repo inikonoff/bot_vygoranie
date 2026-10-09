@@ -1,4 +1,17 @@
+import json
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+
+def _int_keys(answers: dict) -> dict:
+    """FSM-хранилище в JSON приводит ключи к строкам — нормализуем обратно в int."""
+    return {int(k): v for k, v in answers.items()}
+
+
 def calculate_mbi(answers: dict) -> dict:
+    answers = _int_keys(answers)
     ee_indices = [1, 2, 3, 6, 8, 13, 14, 16, 20]
     dp_indices = [5, 10, 11, 15, 22]
     pa_indices = [4, 7, 9, 12, 17, 18, 19, 21]
@@ -15,7 +28,9 @@ def calculate_mbi(answers: dict) -> dict:
     return scores
 
 
-def calculate_boyko(answers: dict) -> dict:
+def _calculate_boyko_simplified(answers: dict) -> dict:
+    """Упрощённый подсчёт (по 3 балла за совпадение) — запасной вариант без файла ключа."""
+    answers = _int_keys(answers)
     s1_keys  = {1: True, 13: True, 25: True, 37: True, 49: True, 61: True, 73: False}
     s2_keys  = {2: False, 14: True, 26: True, 38: True, 50: True, 62: True, 74: True}
     s3_keys  = {3: True, 15: True, 27: True, 39: True, 51: True, 63: True, 75: False}
@@ -56,6 +71,91 @@ def calculate_boyko(answers: dict) -> dict:
         "exhaustion":        exhaustion,
         "exhaustion_status": phase_status(exhaustion),
         "total":             tension + resistance + exhaustion,
+        "simplified":        True,
+    }
+
+
+# ── БОЙКО: подсчёт по ключу методики ─────────────────────────────────────────
+
+BOYKO_KEY_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "boyko_key.json")
+_PHASES = ("tension", "resistance", "exhaustion")
+_boyko_key_cache = None
+
+
+def load_boyko_key(path: str = BOYKO_KEY_PATH):
+    """
+    Читает data/boyko_key.json. Формат:
+    {"symptoms": [
+        {"name": "...", "phase": "tension",
+         "items": [{"q": 1, "answer": "yes", "weight": 2}, {"q": 25, "answer": "no", "weight": 3}, ...]},
+        ... всего 12 симптомов: по 4 на фазы tension, resistance, exhaustion ...
+    ]}
+    Возвращает ключ или None, если файла нет или он некорректен.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            key = json.load(f)
+        symptoms = key["symptoms"]
+        assert len(symptoms) == 12
+        for ph in _PHASES:
+            assert sum(1 for sym in symptoms if sym["phase"] == ph) == 4
+        for sym in symptoms:
+            for it in sym["items"]:
+                assert it["answer"] in ("yes", "no") and it["weight"] >= 0 and int(it["q"]) >= 1
+        return key
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.error(f"boyko_key.json некорректен, используется упрощённый подсчёт: {e}")
+        return None
+
+
+def _boyko_key():
+    global _boyko_key_cache
+    if _boyko_key_cache is None:
+        _boyko_key_cache = load_boyko_key() or False
+    return _boyko_key_cache or None
+
+
+def calculate_boyko(answers: dict, key: dict | None = None) -> dict:
+    """
+    Опросник Бойко. Ответы: {номер: 1 (да) / 0 (нет)}.
+    С ключом data/boyko_key.json — взвешенный подсчёт; пороги фазы: ≤36 не сложилась,
+    37–60 складывается, ≥61 сложилась. Без ключа — упрощённый подсчёт (simplified=True).
+    """
+    key = key or _boyko_key()
+    if not key:
+        return _calculate_boyko_simplified(answers)
+    answers = _int_keys(answers)
+
+    symptom_scores = []
+    phase_totals = {ph: 0 for ph in _PHASES}
+    for sym in key["symptoms"]:
+        score = 0
+        for it in sym["items"]:
+            given = answers.get(int(it["q"]))
+            if given is None:
+                continue
+            if (it["answer"] == "yes" and given == 1) or (it["answer"] == "no" and given == 0):
+                score += it["weight"]
+        symptom_scores.append({"name": sym["name"], "phase": sym["phase"], "score": score})
+        phase_totals[sym["phase"]] += score
+
+    def phase_status(score: int) -> str:
+        if score <= 36:   return "не сложилась"
+        elif score <= 60: return "складывается"
+        else:             return "сложилась"
+
+    return {
+        "tension":           phase_totals["tension"],
+        "tension_status":    phase_status(phase_totals["tension"]),
+        "resistance":        phase_totals["resistance"],
+        "resistance_status": phase_status(phase_totals["resistance"]),
+        "exhaustion":        phase_totals["exhaustion"],
+        "exhaustion_status": phase_status(phase_totals["exhaustion"]),
+        "total":             sum(phase_totals.values()),
+        "symptoms":          symptom_scores,
+        "simplified":        False,
     }
 
 
@@ -99,6 +199,7 @@ def calculate_uwes(answers: dict, questions: list) -> dict:
     Средний балл по каждой шкале и общий.
     Уровни: 0–2.9 низкий, 3–4.9 средний, 5–6 высокий.
     """
+    answers = _int_keys(answers)
     scale_sums = {"vigor": 0, "dedication": 0, "absorption": 0}
     scale_counts = {"vigor": 0, "dedication": 0, "absorption": 0}
 
@@ -145,6 +246,7 @@ def calculate_osipov(answers: dict, questions: list) -> dict:
     """
     # Негативные утверждения — инвертируем
     reversed_items = {1, 2, 3, 4, 5, 6, 7, 12, 13, 18, 23, 28, 29, 34, 39}
+    answers = _int_keys(answers)
 
     scale_sums   = {"demands": 0, "control": 0, "manager_support": 0,
                     "peer_support": 0, "role": 0, "change": 0, "reward": 0}
