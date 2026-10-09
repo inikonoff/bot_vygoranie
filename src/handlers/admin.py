@@ -371,17 +371,29 @@ async def test_groq(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
-    from src.services.llm import get_client
+    from src.services.llm import get_client, MODEL_NAME
     client = await get_client()
+    error = ""
+    if client:
+        try:
+            await client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=16,
+            )
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"[:300]
+            client = None
     if client:
         await callback.message.edit_text(
-            "✅ <b>Groq API работает</b>\n\nКлиент успешно создан.",
+            f"✅ <b>Groq API работает</b>\n\nМодель: <code>{MODEL_NAME}</code>",
             reply_markup=get_admin_panel_keyboard(),
             parse_mode="HTML"
         )
     else:
         await callback.message.edit_text(
-            "❌ <b>Groq API не работает</b>\n\nПроверьте GROQ_API_KEY.",
+            "❌ <b>Groq API не работает</b>\n\n"
+            + (f"<code>{error.replace('<', '&lt;')}</code>" if error else "Проверьте GROQ_API_KEY."),
             reply_markup=get_admin_panel_keyboard(),
             parse_mode="HTML"
         )

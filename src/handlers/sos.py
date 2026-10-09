@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import random
 from aiogram import Router, F, types
@@ -7,6 +8,7 @@ from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from src.keyboards import builders
 from src.services.llm import get_ai_response
+from src.services.crisis import is_crisis, CRISIS_TEXT
 from src.states import AIState, AngerState, DefusionState
 
 logger = logging.getLogger(__name__)
@@ -394,6 +396,9 @@ async def process_ai_query(message: types.Message, state: FSMContext):
         await message.answer("Диалог завершён.", reply_markup=builders.main_menu())
         return
 
+    if is_crisis(message.text):
+        await message.answer(CRISIS_TEXT, parse_mode="HTML")
+
     wait_msg = await message.answer("⏳ ...")
     data = await state.get_data()
     history = data.get("history", [])
@@ -407,7 +412,7 @@ async def process_ai_query(message: types.Message, state: FSMContext):
             history = history[-20:]
 
         await state.update_data(history=history)
-        await wait_msg.edit_text(response, reply_markup=builders.ai_chat_stop_keyboard())
+        await wait_msg.edit_text(html.escape(response, quote=False), reply_markup=builders.ai_chat_stop_keyboard())
 
     except Exception as e:
         logger.error(f"AI chat error: {e}", exc_info=True)

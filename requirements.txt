@@ -1,9 +1,11 @@
 aiogram>=3.10.0
 aiohttp
 supabase>=2.9.0
+httpx
 python-dotenv
-groq
+groq>=0.13.0
 edge-tts
 fastapi
 uvicorn[standard]
 psutil
+apscheduler

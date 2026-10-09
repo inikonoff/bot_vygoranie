@@ -1,6 +1,5 @@
 import os
 import sys
-import signal
 import logging
 import asyncio
 import time
@@ -22,7 +21,7 @@ from aiogram.types import BotCommand
 from src.config import config
 from src.handlers import start, testing, sos, tracker, emotions, resources, chat
 from src.database.supabase_client import db
-from src.rate_limit import RateLimitMiddleware, BannedUsersMiddleware, LoggingMiddleware
+from src.rate_limit import rate_limit_mw, banned_users_mw, logging_mw, RATE_LIMIT_MESSAGES
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,12 +39,6 @@ bot = Bot(
 )
 dp = Dispatcher(storage=MemoryStorage())
 
-# Middleware инстансы — доступны глобально для управления (например, бан через API)
-rate_limit_mw  = RateLimitMiddleware()
-banned_users_mw = BannedUsersMiddleware()
-logging_mw     = LoggingMiddleware()
-
-shutdown_event = asyncio.Event()
 start_time = time.time()
 polling_task = None
 is_shutting_down = False
@@ -68,22 +61,6 @@ async def setup_bot_commands():
     logger.info("✅ Bot commands set up")
 
 
-# ── SIGTERM ───────────────────────────────────────────────────────────────────
-
-def handle_sigterm(signum, frame):
-    global is_shutting_down
-    if is_shutting_down:
-        return
-    logger.info("📡 Received SIGTERM, initiating graceful shutdown...")
-    is_shutting_down = True
-    loop = asyncio.get_running_loop()
-    loop.call_soon_threadsafe(lambda: asyncio.create_task(trigger_shutdown()))
-
-
-async def trigger_shutdown():
-    shutdown_event.set()
-
-
 # ── POLLING ───────────────────────────────────────────────────────────────────
 
 async def run_polling_with_auto_restart():
@@ -91,7 +68,7 @@ async def run_polling_with_auto_restart():
     while not is_shutting_down:
         try:
             logger.info("🚀 Starting polling...")
-            await dp.start_polling(bot)
+            await dp.start_polling(bot, handle_signals=False)
             logger.info("✅ Polling completed normally")
         except asyncio.CancelledError:
             break
@@ -211,9 +188,7 @@ async def lifespan(app: FastAPI):
     ping_task    = asyncio.create_task(keep_alive_ping())
     db_keepalive = asyncio.create_task(db_keep_alive())
 
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, handle_sigterm, sig, None)
+    # SIGTERM/SIGINT обрабатывает uvicorn; на shutdown lifespan отменяет задачи ниже.
 
     logger.info("=" * 50)
     logger.info("✅ Bot started successfully!")
@@ -240,8 +215,6 @@ async def lifespan(app: FastAPI):
 
 
 # ── FASTAPI ───────────────────────────────────────────────────────────────────
-
-from src.rate_limit import RATE_LIMIT_MESSAGES  # для лога
 
 app = FastAPI(
     lifespan=lifespan,

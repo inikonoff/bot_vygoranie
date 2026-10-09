@@ -194,3 +194,10 @@ class LoggingMiddleware(BaseMiddleware):
             logger.info(f"CBQ uid={uid} @{uname}: data={event.data!r}")
 
         return await handler(event, data)
+
+
+# ── ОБЩИЕ ИНСТАНСЫ ───────────────────────────────────────────────────────────
+# Живут здесь, чтобы main.py и админка работали с одними и теми же объектами.
+rate_limit_mw = RateLimitMiddleware()
+banned_users_mw = BannedUsersMiddleware()
+logging_mw = LoggingMiddleware()

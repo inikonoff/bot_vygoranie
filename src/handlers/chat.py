@@ -3,10 +3,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 from aiogram.fsm.state import default_state
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import html
 import logging
 
 from src.services.llm import get_ai_response
 from src.database.supabase_client import db
+from src.services.crisis import is_crisis, CRISIS_TEXT
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -28,20 +30,24 @@ async def chat_logic(message: types.Message, state: FSMContext):
     if message.text in MENU_BUTTONS:
         return
 
+    if is_crisis(message.text):
+        await message.answer(CRISIS_TEXT, parse_mode="HTML")
+
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     # Читаем режим сессии из FSM
     fsm_data = await state.get_data()
     session_mode = fsm_data.get("session_mode", "")
 
-    # Если режим ещё не выбран — предлагаем выбрать (один раз)
+    # Если режим ещё не выбран — предлагаем выбрать (один раз), но сообщение не теряем
     if not session_mode and not fsm_data.get("mode_prompted"):
         await state.update_data(mode_prompted=True)
         await message.answer(
-            "Как ты хочешь работать сегодня?",
+            "Как ты хочешь работать сегодня? Можно выбрать ниже, а на твоё сообщение я отвечу сейчас.",
             reply_markup=SESSION_MODE_KB,
         )
-        return
+
+    history = fsm_data.get("chat_history", [])
 
     try:
         user_context = await db.build_user_context(message.from_user.id)
@@ -49,8 +55,14 @@ async def chat_logic(message: types.Message, state: FSMContext):
             user_text=message.text,
             user_context=user_context,
             session_mode=session_mode,
+            conversation_history=history,
         )
-        await message.answer(response_text)
+        history = (history + [
+            {"role": "user", "content": message.text},
+            {"role": "assistant", "content": response_text},
+        ])[-20:]
+        await state.update_data(chat_history=history)
+        await message.answer(html.escape(response_text, quote=False))
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
         await message.answer("Что-то пошло не так. Попробуй ещё раз.")

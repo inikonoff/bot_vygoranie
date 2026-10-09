@@ -1,4 +1,6 @@
+import html
 import logging
+import os
 from typing import Optional
 from groq import AsyncGroq
 from src.config import config
@@ -6,7 +8,16 @@ from src.config import config
 logger = logging.getLogger(__name__)
 
 _client_instance = None
-MODEL_NAME = "llama-3.3-70b-versatile"
+# llama-3.3-70b-versatile выведена из эксплуатации Groq (16.08.2026).
+# Модель можно переопределить переменной окружения GROQ_MODEL.
+MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+
+
+def _model_kwargs() -> dict:
+    """Доп. параметры: у gpt-oss reasoning съедает max_tokens, поэтому ставим low."""
+    if "gpt-oss" in MODEL_NAME:
+        return {"reasoning_effort": "low"}
+    return {}
 
 
 # ============================================================================
@@ -299,10 +310,9 @@ async def get_ai_response(
             temperature=0.8,
             max_tokens=800,
             top_p=0.95,
-            frequency_penalty=0.15,
-            presence_penalty=0.1,
+            **_model_kwargs(),
         )
-        response = completion.choices[0].message.content
+        response = completion.choices[0].message.content or ""
         return _clean_response(response)
 
     except Exception as e:
@@ -542,8 +552,10 @@ async def _run_analysis(
             temperature=0.6,
             max_tokens=max_tokens,
             top_p=0.9,
+            **_model_kwargs(),
         )
-        return _clean_response(completion.choices[0].message.content)
+        # Результат вставляется в HTML-сообщения Telegram
+        return html.escape(_clean_response(completion.choices[0].message.content or ""), quote=False)
     except Exception as e:
         logger.error(f"Groq analysis error: {e}", exc_info=True)
         return ""

@@ -17,6 +17,7 @@ from src.services.llm import (
 )
 from src.database.supabase_client import db
 from src.states import TestStates
+from src.services.crisis import CRISIS_TEXT
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -284,6 +285,10 @@ async def process_phq9(callback: types.CallbackQuery, state: FSMContext):
     answers = data["answers"]
     answers[str(idx + 1)] = score
     next_idx = idx + 1
+
+    # Вопрос 9 PHQ-9 — мысли о самоповреждении: любой ответ > 0 требует реакции
+    if idx == 8 and score > 0:
+        await callback.message.answer(CRISIS_TEXT, parse_mode="HTML")
 
     if next_idx < len(PHQ9_QUESTIONS):
         await state.update_data(q_index=next_idx, answers=answers)

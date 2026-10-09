@@ -44,7 +44,7 @@ def calculate_boyko(answers: dict) -> dict:
     exhaustion = sum(score_symptom(k) for k in [s9_keys, s10_keys, s11_keys, s12_keys])
 
     def phase_status(score: int) -> str:
-        if score < 36:   return "не сложилась"
+        if score <= 36:  return "не сложилась"
         elif score <= 60: return "складывается"
         else:             return "сложилась"
 

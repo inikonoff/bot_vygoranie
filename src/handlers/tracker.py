@@ -5,7 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.database.supabase_client import db
 from src.keyboards import builders
 from src.states import TrackerStates
-from src.services.llm import generate_weekly_narrative, generate_cross_test_comment
+from src.services.llm import generate_weekly_narrative
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -200,17 +200,3 @@ async def show_dynamics(message: types.Message):
         except Exception as e:
             logger.warning(f"Weekly narrative error: {e}")
             await wait_msg.delete()
-
-    # Кросс-тест паттерн
-    try:
-        pattern = await db.get_cross_test_pattern(message.from_user.id)
-        if pattern:
-            latest_tests = await db.get_latest_test_results(message.from_user.id)
-            comment = await generate_cross_test_comment(pattern, latest_tests)
-            if comment:
-                await message.answer(
-                    f"📊 <b>Общая картина по тестам:</b>\n\n{comment}",
-                    parse_mode="HTML"
-                )
-    except Exception as e:
-        logger.warning(f"Cross-test pattern error: {e}")
